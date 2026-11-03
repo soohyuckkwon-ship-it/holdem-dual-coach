@@ -62,7 +62,19 @@ else {
   console.log('pushed', commit.sha.slice(0, 7), `(${files.length} files)`);
 }
 
-if (!tryGh([`repos/${full}/pages`])) {
+// 사이트가 gh-pages 브랜치에서 서빙되면 docs/ 내용을 그 브랜치 루트에도 올린다 (2026-11-03 새 계정은 gh-pages로 켜짐)
+const ghp = tryGh([`repos/${full}/git/ref/heads/gh-pages`]);
+if (ghp) {
+  const pc = gh([`repos/${full}/git/commits/${ghp.object.sha}`]);
+  const docsTree = [];
+  for (const t of tree) if (t.path.startsWith('docs/')) docsTree.push({ ...t, path: t.path.slice(5) });
+  const nt = gh(['-X', 'POST', `repos/${full}/git/trees`], { base_tree: pc.tree.sha, tree: docsTree });
+  if (nt.sha !== pc.tree.sha) {
+    const c = gh(['-X', 'POST', `repos/${full}/git/commits`], { message, tree: nt.sha, parents: [ghp.object.sha] });
+    gh(['-X', 'PATCH', `repos/${full}/git/refs/heads/gh-pages`], { sha: c.sha });
+    console.log('gh-pages', c.sha.slice(0, 7));
+  }
+} else if (!tryGh([`repos/${full}/pages`])) {
   gh(['-X', 'POST', `repos/${full}/pages`], { source: { branch, path: '/docs' } });
   console.log('GitHub Pages enabled (/docs)');
 }
