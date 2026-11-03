@@ -1,0 +1,31 @@
+{
+  "name": "홀덤 듀얼 코치",
+  "short_name": "듀얼 코치",
+  "description": "상대 액션을 입력하면 타이트 전문가와 균형형 전문가가 솔버식 액션 빈도를 내고 토론해 합의 액션을 추천하는 홀덤 코치",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c1210",
+  "theme_color": "#133a2c",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

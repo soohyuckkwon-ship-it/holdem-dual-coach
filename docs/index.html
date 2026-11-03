@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="상대 액션을 입력하면 타이트 전문가와 균형형 전문가가 솔버식 액션 빈도를 내고 토론해 합의 액션을 추천하는 홀덤 코치">
+<meta name="theme-color" content="#133a2c">
+<meta name="app-standalone" content="1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="듀얼 코치">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>홀덤 듀얼 코치</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 레이아웃: 왼쪽 입력 레일 + 오른쪽 솔버 패널(펠트 그린). 모바일은 한 줄로 쌓고 하단 독에 합의 액션을 띄운다 */
+:root {
+  --bg: #eceeea;
+  --surface: #fbfcfa;
+  --surface-2: #f1f4ef;
+  --line: #d3d9d1;
+  --ink: #17201b;
+  --ink-2: #48544c;
+  --ink-3: #78847c;
+  --felt: #133a2c;
+  --felt-2: #1a4a39;
+  --felt-ink: #ecf4ee;
+  --felt-dim: #a8c2b3;
+  --gold: #d6a12a;
+  --fold: #3c6db1;
+  --call: #2b8f60;
+  --bet1: #e48b78;
+  --bet2: #d8604f;
+  --bet3: #c03f35;
+  --bet4: #9b2c28;
+  --allin: #6a1b1b;
+  --tight: #2e5b88;
+  --bal: #a4552b;
+  --suit-s: #1d2420;
+  --suit-h: #c8312b;
+  --suit-d: #2563b8;
+  --suit-c: #23864f;
+  --focus: #d6a12a;
+  --font-display: 'Barlow Condensed', 'Arial Narrow', 'Malgun Gothic', sans-serif;
+  --font-body: 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1210; --surface: #141c19; --surface-2: #1a2420; --line: #2a3631;
+    --ink: #e5ece7; --ink-2: #a7b4ab; --ink-3: #758279;
+    --felt: #0f2c21; --felt-2: #163b2d; --felt-ink: #e3efe7; --felt-dim: #8fae9c;
+    --gold: #e7b545; --fold: #5a8ad0; --call: #3dae78;
+    --bet1: #ef9d8c; --bet2: #e57565; --bet3: #d4544a; --bet4: #b4403a; --allin: #8a2626;
+    --tight: #6c9ad0; --bal: #dc8a5c;
+    --suit-s: #e5ece7; --suit-h: #ef6a62; --suit-d: #6ea2ea; --suit-c: #4fc283;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1210; --surface: #141c19; --surface-2: #1a2420; --line: #2a3631;
+  --ink: #e5ece7; --ink-2: #a7b4ab; --ink-3: #758279;
+  --felt: #0f2c21; --felt-2: #163b2d; --felt-ink: #e3efe7; --felt-dim: #8fae9c;
+  --gold: #e7b545; --fold: #5a8ad0; --call: #3dae78;
+  --bet1: #ef9d8c; --bet2: #e57565; --bet3: #d4544a; --bet4: #b4403a; --allin: #8a2626;
+  --tight: #6c9ad0; --bal: #dc8a5c;
+  --suit-s: #e5ece7; --suit-h: #ef6a62; --suit-d: #6ea2ea; --suit-c: #4fc283;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+
+.app { max-width: 1240px; margin: 0 auto; padding-block: 16px 96px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brand h1 { font-family: var(--font-display); font-weight: 700; font-size: 30px; letter-spacing: 0.01em; line-height: 1; }
+.brand h1 span { color: var(--gold); }
+.brand p { margin: 0; color: var(--ink-3); font-size: 13px; }
+.top .note { color: var(--ink-3); font-size: 12px; max-width: 46ch; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* 입력 레일 */
+.inputs { display: flex; flex-direction: column; gap: 12px; }
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.group h2 { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lbl { font-size: 12px; color: var(--ink-2); min-width: 64px; }
+.sub-lbl { font-size: 12px; color: var(--ink-2); }
+.hint { font-size: 12px; color: var(--ink-3); margin: 0; }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.seg button { border: 0; background: transparent; padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--felt); color: var(--felt-ink); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); border-radius: 999px; padding: 5px 11px; font-size: 13px; font-weight: 500; line-height: 1.3; }
+.chip:hover { border-color: var(--ink-3); }
+.chip[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: var(--felt-ink); }
+.chip[disabled] { opacity: 0.35; cursor: not-allowed; }
+.chips.pos .chip { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: 0.02em; padding: 3px 11px; min-width: 46px; }
+.chips.small .chip { padding: 3px 9px; font-size: 12px; }
+.chip .sub { font-size: 11px; opacity: 0.75; margin-left: 4px; }
+
+.num { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 0 8px; }
+.num input { width: 64px; border: 0; background: transparent; padding: 6px 2px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.num input:focus { outline: none; }
+.num:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.num span { font-size: 12px; color: var(--ink-3); margin-left: 4px; }
+.ghost { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: var(--ink-2); }
+.ghost:hover { border-color: var(--ink-3); color: var(--ink); }
+.linkish { border: 0; background: none; color: var(--ink-3); font-size: 12px; text-decoration: underline; padding: 0; }
+
+/* 카드 */
+.cards { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.card { width: 46px; height: 62px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 24px; line-height: 0.95; text-align: center; position: relative; padding: 0; }
+.card .s { display: block; font-size: 20px; }
+.card.empty { border-style: dashed; color: var(--ink-3); font-size: 13px; font-family: var(--font-body); font-weight: 500; background: transparent; }
+.card.active { outline: 2px solid var(--gold); outline-offset: 2px; }
+.card.dim { opacity: 0.4; }
+.card.suit-0 { color: var(--suit-s); } .card.suit-1 { color: var(--suit-h); } .card.suit-2 { color: var(--suit-d); } .card.suit-3 { color: var(--suit-c); }
+.cards .gap { width: 6px; }
+
+.picker { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.picker .ranks { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 4px; }
+@media (max-width: 520px) { .picker .ranks { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
+.picker .suits { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 6px; }
+.pk { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; min-height: 36px; font-family: var(--font-display); font-size: 20px; font-weight: 700; }
+.pk[aria-pressed="true"] { background: var(--felt); color: var(--felt-ink); border-color: var(--felt); }
+.pk[disabled] { opacity: 0.25; cursor: not-allowed; }
+.pk.s0 { color: var(--suit-s); } .pk.s1 { color: var(--suit-h); } .pk.s2 { color: var(--suit-d); } .pk.s3 { color: var(--suit-c); }
+.pk.clear { font-family: var(--font-body); font-size: 12px; font-weight: 500; padding: 0 10px; color: var(--ink-2); }
+.picker .hint { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tabs button { border: 0; background: var(--surface-2); padding: 8px 4px; font-weight: 600; font-size: 13px; color: var(--ink-2); }
+.tabs button + button { border-left: 1px solid var(--line); }
+.tabs button[aria-selected="true"] { background: var(--felt); color: var(--felt-ink); }
+.pane { display: flex; flex-direction: column; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.split { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.example-tag { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: var(--gold); border: 1px solid var(--gold); border-radius: 4px; padding: 1px 6px; }
+
+/* 핸드 진행: 펠트 테이블 위에 자리를 자동 배치한다. 내 자리는 항상 아래 */
+.felt-table { position: relative; height: 240px; background: var(--felt); border-radius: 110px; border: 3px solid var(--felt-2); color: var(--felt-ink); }
+.felt-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--felt-dim); pointer-events: none; }
+.felt-center b { display: block; font-family: var(--font-display); font-size: 22px; font-weight: 700; color: var(--felt-ink); }
+.seat { position: absolute; transform: translate(-50%, -50%); width: 62px; padding: 2px 2px 3px; border-radius: 8px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); text-align: center; line-height: 1.15; }
+.seat .p { font-family: var(--font-display); font-weight: 700; font-size: 14px; display: block; }
+.seat .a { font-size: 10px; color: var(--ink-2); display: block; min-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat.me { border-color: var(--gold); }
+.seat.turn { outline: 2px solid var(--gold); outline-offset: 1px; }
+.seat.out { opacity: 0.45; }
+.flow-head { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+.flow-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.act-btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 7px 11px; font-weight: 600; font-size: 13px; color: var(--ink); min-height: 36px; }
+.act-btn:hover { border-color: var(--ink-3); }
+.act-btn b { font-family: var(--font-mono); font-weight: 600; margin-left: 6px; color: var(--ink-2); }
+.act-btn.top { border: 2px solid var(--gold); }
+.act-btn.fold { color: var(--fold); } .act-btn.call { color: var(--call); } .act-btn.raise { color: var(--bet3); } .act-btn.allin { color: var(--allin); }
+.flow-log { margin: 8px 0 0; padding: 0; list-style: none; max-height: 132px; overflow-y: auto; font-size: 12px; color: var(--ink-3); display: flex; flex-direction: column; gap: 1px; }
+.flow-log .me { color: var(--ink); font-weight: 600; }
+.flow-end { margin: 0 0 8px; font-weight: 600; }
+.flow-undo { margin-top: 10px; }
+.flow-undo .ghost { min-height: 36px; font-size: 13px; }
+
+.play-box { border-left: 5px solid var(--ink-3); }
+.play-box.play { border-left-color: var(--call); } .play-box.mixed { border-left-color: var(--gold); } .play-box.fold { border-left-color: var(--fold); }
+.play-main { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1.2; }
+.play-main b { font-family: var(--font-mono); font-size: 15px; font-weight: 600; color: var(--ink-2); }
+
+/* 결과 */
+.results { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.solver { background: var(--felt); color: var(--felt-ink); border-radius: 14px; padding: 16px 18px 14px; box-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 12px 32px -18px rgba(10, 40, 28, 0.6); }
+.solver-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.spot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mini { display: inline-flex; gap: 3px; }
+.mini .mc { background: #f7f8f4; border-radius: 4px; padding: 1px 5px; font-family: var(--font-display); font-weight: 700; font-size: 17px; line-height: 1.3; }
+.mini .mc.suit-0 { color: #1d2420; } .mini .mc.suit-1 { color: #c8312b; } .mini .mc.suit-2 { color: #2563b8; } .mini .mc.suit-3 { color: #23864f; }
+.spot .meta { font-size: 12px; color: var(--felt-dim); }
+.solver-title { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--felt-dim); }
+.freq-table { display: flex; flex-direction: column; gap: 2px; }
+.fr { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 10px; padding: 2px 10px; border-radius: 6px; border: 2px solid transparent; overflow: hidden; }
+.fr .bar { position: absolute; inset: 0 auto 0 0; opacity: 0.85; border-radius: 4px 0 0 4px; transition: width 0.35s ease; }
+.fr .name, .fr .val { position: relative; font-family: var(--font-display); font-weight: 600; font-variant-numeric: tabular-nums; }
+.fr .name { font-size: 30px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fr .name small { font-size: 16px; font-weight: 500; opacity: 0.8; margin-left: 6px; }
+.fr .val { font-size: 32px; line-height: 1.1; }
+.fr.top { border-color: var(--gold); }
+.fr.zero { opacity: 0.5; }
+@media (max-width: 520px) { .fr .name { font-size: 24px; } .fr .val { font-size: 26px; } }
+.solver-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--felt-dim); }
+.solver-foot b { color: var(--felt-ink); font-weight: 600; }
+.verdict { margin-top: 10px; font-size: 15px; font-weight: 600; }
+.verdict em { font-style: normal; color: var(--gold); }
+
+.card-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; min-width: 0; }
+.card-box h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.stat { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.stat .k { font-size: 11px; color: var(--ink-3); }
+.stat .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600; }
+.handline { font-size: 13px; color: var(--ink-2); margin: 8px 0 0; }
+
+.debate { display: flex; flex-direction: column; gap: 8px; }
+.msg { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: start; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 15px; color: #fff; }
+.avatar.tight { background: var(--tight); } .avatar.balanced { background: var(--bal); } .avatar.judge { background: var(--felt); color: var(--gold); }
+.bubble { background: var(--surface-2); border-radius: 4px 10px 10px 10px; padding: 7px 11px; }
+.bubble .who { font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.msg.judge .bubble { background: transparent; border: 1px solid var(--gold); }
+
+.experts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 700px) { .experts { grid-template-columns: minmax(0, 1fr); } }
+.expert { border-top: 3px solid var(--tight); }
+.expert.balanced { border-top-color: var(--bal); }
+.expert-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.expert-head h3 { margin: 0; }
+.expert-head .tag { font-size: 11px; color: var(--ink-3); }
+.mini-table { display: flex; flex-direction: column; gap: 3px; }
+.mr { display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; align-items: center; font-size: 13px; }
+.mr .lab { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mr .lab span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mr .track { height: 5px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.mr .track i { display: block; height: 100%; border-radius: 3px; }
+.mr .pv { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.mr.top .lab span { font-weight: 700; }
+.headline { margin: 10px 0 6px; font-size: 13px; font-weight: 600; }
+.facts { margin: 0; padding-left: 16px; color: var(--ink-2); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 10px; background: var(--surface-2); }
+.mix i { display: block; height: 100%; }
+.mix-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.mix-legend b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+.grid-wrap { overflow-x: auto; }
+.rgrid { display: grid; grid-template-columns: repeat(13, minmax(22px, 1fr)); gap: 1px; min-width: 300px; font-family: var(--font-mono); font-size: 10px; }
+.rgrid div { aspect-ratio: 1 / 1; display: grid; place-items: center; border-radius: 2px; color: var(--ink); position: relative; overflow: hidden; background: var(--surface-2); max-width: 100%; }
+.rgrid div span { position: relative; }
+.rgrid div.me { outline: 2px solid var(--gold); outline-offset: -2px; font-weight: 700; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: var(--ink-3); margin-top: 8px; }
+.legend b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+.ai .ai-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.btn { border: 0; border-radius: 8px; background: var(--felt); color: var(--felt-ink); padding: 8px 14px; font-weight: 600; }
+.btn[disabled] { opacity: 0.5; cursor: wait; }
+.ai-status { font-size: 12px; color: var(--ink-3); }
+.ai-out { display: flex; flex-direction: column; gap: 12px; }
+.err { color: var(--bet3); font-size: 13px; }
+.empty-state { color: var(--ink-3); text-align: center; padding: 28px 12px; }
+
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--felt); color: var(--felt-ink); padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); display: none; align-items: center; justify-content: space-between; gap: 10px; border-top: 2px solid var(--gold); }
+.dock .d-act { font-family: var(--font-display); font-size: 24px; font-weight: 700; }
+.dock .d-sub { font-size: 12px; color: var(--felt-dim); }
+.dock button { background: transparent; border: 1px solid var(--felt-dim); color: var(--felt-ink); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+@media (max-width: 960px) { .dock { display: flex; } }
+.disclaimer { font-size: 12px; color: var(--ink-3); margin: 4px 0 0; }
+@media (prefers-reduced-motion: reduce) { .fr .bar { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <h1>홀덤 <span>듀얼</span> 코치</h1>
+      <p>타이트 전문가와 균형형 전문가가 함께 고르는 솔버식 액션 빈도</p>
+    </div>
+    <p class="note">빈도는 레인지·에퀴티 계산과 전략 모델로 근사한 값이며 실제 솔버 출력이 아닙니다. 온라인 리얼머니 게임 도중 사용은 대부분 사이트 약관 위반이니 복기·학습용으로 쓰세요.</p>
+  </header>
+
+  <main class="layout">
+    <section class="inputs" aria-label="상황 입력">
+      <div class="group">
+        <div class="group-head"><h2>게임</h2><button class="ghost" id="newHand" type="button">새 핸드</button></div>
+        <div class="row">
+          <div class="seg" data-field="game"><button type="button" data-v="cash">캐시</button><button type="button" data-v="mtt">토너먼트</button></div>
+          <div class="seg" data-field="mode"><button type="button" data-v="flow">핸드 진행</button><button type="button" data-v="manual">직접 입력</button></div>
+        </div>
+        <div class="row">
+          <span class="lbl">인원</span>
+          <div class="chips small" data-field="table">
+            <button class="chip" type="button" data-v="3">3</button>
+            <button class="chip" type="button" data-v="4">4</button>
+            <button class="chip" type="button" data-v="5">5</button>
+            <button class="chip" type="button" data-v="6">6</button>
+            <button class="chip" type="button" data-v="7">7</button>
+            <button class="chip" type="button" data-v="8">8</button>
+            <button class="chip" type="button" data-v="9">9</button>
+          </div>
+        </div>
+        <div class="row" data-show="mtt">
+          <span class="lbl">단계</span>
+          <div class="chips small" data-field="stage">
+            <button class="chip" type="button" data-v="early">초반</button>
+            <button class="chip" type="button" data-v="middle">중반</button>
+            <button class="chip" type="button" data-v="bubble">버블</button>
+            <button class="chip" type="button" data-v="itm">인더머니</button>
+            <button class="chip" type="button" data-v="ft">파이널</button>
+          </div>
+        </div>
+        <div class="row">
+          <label class="lbl" for="eff">유효 스택</label>
+          <div class="num"><input id="eff" type="number" inputmode="decimal" min="1" step="1"><span>BB</span></div>
+          <div class="chips small" data-quick="eff">
+            <button class="chip" type="button" data-v="10">10</button>
+            <button class="chip" type="button" data-v="20">20</button>
+            <button class="chip" type="button" data-v="40">40</button>
+            <button class="chip" type="button" data-v="100">100</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-head"><h2>나</h2><span class="example-tag" id="exampleTag">예시 핸드</span></div>
+        <div class="chips pos" data-field="heroPos"></div>
+        <div class="cards" data-cards="hero"></div>
+      </div>
+
+      <div class="group">
+        <h2>상대</h2>
+        <div class="chips pos" data-field="oppPos" id="oppPosRow"></div>
+        <div class="chips small" data-field="oppType">
+          <button class="chip" type="button" data-v="unknown">모름</button>
+          <button class="chip" type="button" data-v="nit">니트</button>
+          <button class="chip" type="button" data-v="reg">레귤러</button>
+          <button class="chip" type="button" data-v="lag">LAG</button>
+          <button class="chip" type="button" data-v="station">콜링스테이션</button>
+          <button class="chip" type="button" data-v="maniac">매니악</button>
+        </div>
+      </div>
+
+      <div class="group" id="flowGroup">
+        <div class="group-head"><h2>테이블</h2></div>
+        <div class="felt-table" id="flowTable"></div>
+        <div class="field" id="flowBoardSlot"></div>
+        <div id="flowActs"></div>
+        <ol class="flow-log" id="flowLog"></ol>
+      </div>
+
+      <div class="group" id="manualGroup">
+        <div class="tabs" role="tablist" data-field="street">
+          <button type="button" role="tab" data-v="preflop">프리플랍</button>
+          <button type="button" role="tab" data-v="flop">플랍</button>
+          <button type="button" role="tab" data-v="turn">턴</button>
+          <button type="button" role="tab" data-v="river">리버</button>
+        </div>
+
+        <div class="pane" data-pane="preflop">
+          <div class="field">
+            <span class="sub-lbl">상대 액션 (내 차례 직전)</span>
+            <div class="chips" data-field="pfAction">
+              <button class="chip" type="button" data-v="none">내가 첫 액션</button>
+              <button class="chip" type="button" data-v="limp">림프</button>
+              <button class="chip" type="button" data-v="open">오픈 레이즈</button>
+              <button class="chip" type="button" data-v="3bet">내 오픈에 3벳</button>
+              <button class="chip" type="button" data-v="4bet">내 3벳에 4벳</button>
+              <button class="chip" type="button" data-v="allin">올인</button>
+            </div>
+          </div>
+          <div class="split">
+            <div class="row" data-show-pf="open 3bet 4bet"><label class="lbl" for="raiseSize">상대 레이즈</label><div class="num"><input id="raiseSize" type="number" inputmode="decimal" min="1" step="0.1" placeholder="자동"><span>BB</span></div></div>
+            <div class="row" data-show-pf="3bet 4bet"><label class="lbl" for="heroOpen">내 레이즈</label><div class="num"><input id="heroOpen" type="number" inputmode="decimal" min="1" step="0.1" placeholder="자동"><span>BB</span></div></div>
+            <div class="row" data-show-pf="limp"><label class="lbl" for="limpers">림퍼 수</label><div class="num"><input id="limpers" type="number" inputmode="numeric" min="1" max="8" step="1"><span>명</span></div></div>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="post">
+          <div class="field" id="boardField">
+            <span class="sub-lbl">보드</span>
+            <div class="cards" data-cards="board"></div>
+          </div>
+          <div class="field">
+            <span class="sub-lbl">프리플랍 라인</span>
+            <div class="chips small" data-field="line">
+              <button class="chip" type="button" data-v="hero_open_call">내 오픈 → 상대 콜</button>
+              <button class="chip" type="button" data-v="opp_open_call">상대 오픈 → 내 콜</button>
+              <button class="chip" type="button" data-v="hero_3bet_call">내 3벳 → 상대 콜</button>
+              <button class="chip" type="button" data-v="opp_3bet_call">상대 3벳 → 내 콜</button>
+              <button class="chip" type="button" data-v="limp">림프 팟</button>
+              <button class="chip" type="button" data-v="hero_4bet_call">내 4벳 → 상대 콜</button>
+              <button class="chip" type="button" data-v="opp_4bet_call">상대 4벳 → 내 콜</button>
+            </div>
+          </div>
+          <div class="field" data-show-street="turn river">
+            <span class="sub-lbl">플랍 진행</span>
+            <div class="chips small" data-result="flop"></div>
+          </div>
+          <div class="field" data-show-street="river">
+            <span class="sub-lbl">턴 진행</span>
+            <div class="chips small" data-result="turn"></div>
+          </div>
+          <div class="split">
+            <div class="row"><label class="lbl" for="pot">스트리트 시작 팟</label><div class="num"><input id="pot" type="number" inputmode="decimal" min="0.5" step="0.5"><span>BB</span></div><button class="linkish" type="button" id="potAuto">자동</button></div>
+            <div class="row"><span class="lbl">상대 수</span><div class="seg" data-field="multiway"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3+</button></div></div>
+          </div>
+          <div class="field">
+            <span class="sub-lbl">지금 상대 액션</span>
+            <div class="chips" data-field="curAct">
+              <button class="chip" type="button" data-v="first">내가 먼저</button>
+              <button class="chip" type="button" data-v="check">상대 체크</button>
+              <button class="chip" type="button" data-v="bet">상대 벳</button>
+              <button class="chip" type="button" data-v="raise">내 벳에 레이즈</button>
+              <button class="chip" type="button" data-v="allin">상대 올인</button>
+            </div>
+          </div>
+          <div class="field" data-show-act="bet">
+            <div class="row"><label class="lbl" for="betAmt">상대 벳</label><div class="num"><input id="betAmt" type="number" inputmode="decimal" min="0.1" step="0.1"><span>BB</span></div></div>
+            <div class="chips small" data-quick="bet">
+              <button class="chip" type="button" data-v="0.33">33%</button>
+              <button class="chip" type="button" data-v="0.5">50%</button>
+              <button class="chip" type="button" data-v="0.75">75%</button>
+              <button class="chip" type="button" data-v="1">팟</button>
+              <button class="chip" type="button" data-v="1.5">150%</button>
+            </div>
+          </div>
+          <div class="split" data-show-act="raise">
+            <div class="row"><label class="lbl" for="myBet">내 벳</label><div class="num"><input id="myBet" type="number" inputmode="decimal" min="0.1" step="0.1"><span>BB</span></div></div>
+            <div class="row"><label class="lbl" for="raiseTo">레이즈 총액</label><div class="num"><input id="raiseTo" type="number" inputmode="decimal" min="0.1" step="0.1"><span>BB</span></div></div>
+          </div>
+          <div class="row" data-show-act="allin"><label class="lbl" for="allinAmt">올인 금액</label><div class="num"><input id="allinAmt" type="number" inputmode="decimal" min="0.1" step="0.1" placeholder="스택"><span>BB</span></div></div>
+          <p class="hint" id="stackHint"></p>
+        </div>
+      </div>
+
+      <div class="picker" id="picker" hidden>
+        <div class="ranks" id="pkRanks"></div>
+        <div class="suits" id="pkSuits"></div>
+        <p class="hint"><span>랭크 → 무늬 순으로 누르세요. 키보드: A K Q J T 9…2 / s h d c</span><button class="linkish" type="button" id="pkClose">닫기</button></p>
+      </div>
+    </section>
+
+    <section class="results" id="results" aria-live="polite"></section>
+  </main>
+</div>
+
+<div class="dock" id="dock">
+  <div><div class="d-sub" id="dockSub">합의 액션</div><div class="d-act" id="dockAct">—</div></div>
+  <button type="button" id="dockGo">결과 보기</button>
+</div>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
