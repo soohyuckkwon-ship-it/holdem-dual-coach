@@ -529,3 +529,20 @@ test('멀티웨이 에퀴티 샘플러: 상대 1명이면 헤즈업 전수 계�
   // 예전 근사(헤즈업 에퀴티^(1+0.8(N-1)))는 드로우의 다자 에퀴티를 크게 낮춰 봤다
   assert.ok(r3.balanced.equity > Math.pow(r1.balanced.equity, 2.6) + 0.1);
 });
+
+test('연습 모드: 고른 스트리트의 내 차례에서 멈춘 문제를 만들고, 추천 액션은 정답으로 채점한다', () => {
+  for (const street of ['preflop', 'flop', 'turn', 'river']) {
+    const p = E.practiceHand({ table: 6, eff: 100, game: 'cash', streets: [street] }, 1000 + street.length);
+    assert.ok(p, street);
+    assert.equal(p.street, street);
+    assert.equal(p.state.toAct, p.state.heroPos);
+    assert.ok(p.res.actions.length >= 2);
+    const g = E.gradeChoice(p.res, p.res.consensus.top);
+    assert.equal(g.level, 'good');
+    assert.ok(g.loss == null || g.loss < 1e-9);
+    // 같은 시드는 같은 문제
+    assert.deepEqual(E.practiceHand({ table: 6, eff: 100, game: 'cash', streets: [street] }, 1000 + street.length).hero, p.hero);
+  }
+  const p = E.practiceHand({ table: 9, eff: 40, game: 'mtt', heroPos: 'BB', streets: ['flop'] }, 77);
+  assert.ok(p && p.cfg.heroPos === 'BB' && p.street === 'flop');
+});

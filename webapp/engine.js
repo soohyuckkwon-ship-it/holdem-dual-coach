@@ -1693,12 +1693,117 @@
     return { play, level, label: { play: '플레이', mixed: '경계 — 빈도로 섞음', fold: '폴드' }[level] };
   }
 
+  // ───────────────────────── 연습 모드 ─────────────────────────
+  // 무작위 카드와 상대 액션으로 핸드를 진행하다가, 정해진 스트리트의 내 차례에서 멈춘다.
+  // 상대는 카드를 보지 않는 확률 정책으로 움직이고, 그 전 내 결정은 합의 추천을 따른다.
+  const cardStr = (c) => RANKS[c >> 2] + SUITS[c & 3];
+  function pickW(rand, items) { // [[값, 가중치]...]
+    let t = 0; for (const [, w] of items) t += w;
+    let x = rand() * t;
+    for (const [v, w] of items) { x -= w; if (x <= 0) return v; }
+    return items[items.length - 1][0];
+  }
+  function practiceOppAction(s, rand) {
+    const o = flowOptions(s);
+    const raises = s.log.filter((e) => e.street === s.street && e.raised).length;
+    const size = (i) => (o.sizes[i] || o.sizes[o.sizes.length - 1] || {}).to;
+    // 이미 다른 상대가 팟에 들어와 있으면 대부분 폴드해서 헤즈업 위주로 만든다
+    const inPot = s.order.filter((p) => p !== s.toAct && p !== s.heroPos && s.players[p].inHand && (s.players[p].bet > (p === 'BB' ? 1 : p === 'SB' ? 0.5 : 0) || s.street !== 'preflop')).length;
+    if (s.street === 'preflop') {
+      if (raises === 0) {
+        const pick = pickW(rand, [['fold', inPot ? 9 : 76], ['raise', 20], ['call', s.toAct === 'SB' ? 6 : 1]]);
+        if (pick === 'raise' && o.canRaise) return { type: 'raise', to: size(1) };
+        return { type: pick === 'call' ? 'call' : 'fold' };
+      }
+      const facingHero = s.log.filter((e) => e.raised).pop().hero;
+      const w = raises === 1 ? [['fold', facingHero ? 55 : 80], ['call', 30], ['raise', 12]]
+        : raises === 2 ? [['fold', 45], ['call', 38], ['raise', 14], ['allin', 3]]
+          : [['fold', 50], ['call', 28], ['allin', 22]];
+      const pick = pickW(rand, inPot && !facingHero ? [['fold', 1]] : w);
+      if (pick === 'raise' && o.canRaise) return { type: 'raise', to: size(raises === 1 ? 1 : 0) };
+      if (pick === 'allin') return { type: 'allin' };
+      return { type: pick === 'raise' ? 'call' : pick };
+    }
+    if (o.canCheck) {
+      const pick = pickW(rand, [['check', 52], ['b33', 18], ['b50', 16], ['b75', 10], ['b100', 4]]);
+      if (pick === 'check' || !o.canRaise) return { type: 'check' };
+      const pctMap = { b33: 0.33, b50: 0.5, b75: 0.75, b100: 1 };
+      const to = round1(s.pot * pctMap[pick]);
+      return to >= o.max * 0.85 ? { type: 'allin' } : { type: 'bet', to: Math.max(o.min, to) };
+    }
+    const pick = pickW(rand, [['fold', 32], ['call', 55], ['raise', o.canRaise ? 13 : 0]]);
+    if (pick === 'raise') return { type: 'raise', to: size(0) || o.max };
+    return { type: pick };
+  }
+  // 합의 액션 → 진행 액션 (앱의 빈도 버튼과 같은 규칙)
+  function flowActionFor(s, a) {
+    const o = flowOptions(s);
+    if (a.kind === 'fold') return { type: 'fold' };
+    if (a.kind === 'check' || a.kind === 'call') return { type: o.canCheck ? 'check' : 'call' };
+    if (a.kind === 'allin') return { type: 'allin' };
+    return { type: o.raiseType, to: (s.street === 'preflop' ? 0 : s.players[s.heroPos].bet) + (a.amount || o.min) };
+  }
+  function practiceHand(cfg, seed) {
+    const rand = rng(seed >>> 0);
+    const table = normTable(cfg.table), streets = cfg.streets && cfg.streets.length ? cfg.streets : ['preflop', 'flop', 'turn', 'river'];
+    const extra = { stage: cfg.stage || 'middle', oppType: cfg.oppType || 'unknown' };
+    for (let tries = 0; tries < 60; tries++) {
+      const target = streets[(rand() * streets.length) | 0];
+      const heroPos = cfg.heroPos || POSITIONS[table][(rand() * POSITIONS[table].length) | 0];
+      // 내 카드: 포스트플랍 문제는 플레이할 만한 상위 핸드에서 뽑아 프리플랍 폴드로 끝나는 일을 줄인다
+      const deck = Array.from({ length: 52 }, (_, i) => i);
+      for (let i = 51; i > 0; i--) { const j = (rand() * (i + 1)) | 0; [deck[i], deck[j]] = [deck[j], deck[i]]; }
+      let hero = deck.slice(0, 2);
+      if (target !== 'preflop' || rand() < 0.5) {
+        const top = topPercent(target === 'preflop' ? 0.4 : 0.3);
+        const vr = rangeCombos(top, new Set());
+        let t = 0; for (const w of vr.w) t += w;
+        let x = rand() * t, k = 0;
+        for (; k < vr.w.length - 1; k++) { x -= vr.w[k]; if (x <= 0) break; }
+        hero = COMBOS[vr.idx[k]].slice();
+      }
+      const rest = deck.filter((c) => c !== hero[0] && c !== hero[1]);
+      const board = rest.slice(0, 5);
+      const hand = { table, eff: cfg.eff || 100, game: cfg.game === 'mtt' ? 'mtt' : 'cash', heroPos };
+      const s = startHand(hand), acts = [];
+      let ok = false;
+      for (let step = 0; step < 80 && s.status === 'playing'; step++) {
+        if (s.toAct === s.heroPos) {
+          if (s.street === target) { ok = true; break; }
+          const ctx = Object.assign(flowContext(s), extra, { hero, board: board.slice(0, { preflop: 0, flop: 3, turn: 4, river: 5 }[s.street]) });
+          const r = analyze(ctx);
+          if (!r || r.error || !r.actions) break;
+          const a = flowActionFor(s, r.actions[r.consensus.top]);
+          applyAction(s, a); acts.push(a);
+        } else {
+          const a = practiceOppAction(s, rand);
+          applyAction(s, a); acts.push(a);
+        }
+      }
+      if (!ok) continue;
+      const ctx = Object.assign(flowContext(s), extra, { hero, board: board.slice(0, { preflop: 0, flop: 3, turn: 4, river: 5 }[s.street]) });
+      const res = analyze(ctx);
+      if (!res || res.error || res.walk || !res.actions) continue;
+      return { cfg: hand, acts, hero: hero.map(cardStr), board: board.map(cardStr), street: s.street, state: s, ctx, res };
+    }
+    return null;
+  }
+  // 고른 액션 채점: 합의 빈도와 균형형 EV 차이로 정답·혼합·실수를 나눈다
+  function gradeChoice(res, i) {
+    const f = res.consensus.freq, top = res.consensus.top;
+    const mine = f[i] || 0, best = f[top] || 0;
+    const evs = res.balanced.evs;
+    const loss = Array.isArray(evs) && evs.length === f.length && Number.isFinite(evs[i]) && Number.isFinite(evs[top]) ? Math.max(0, evs[top] - evs[i]) : null; // 합의 추천 액션 대비
+    const level = i === top || mine >= 0.35 || mine >= best * 0.6 ? 'good' : mine >= 0.1 ? 'mixed' : 'bad';
+    return { level, mine, best, top, loss };
+  }
+
   const api = {
     RANKS, SUITS, SUIT_SYM, parseCard, parseCards, cardText, evaluate, keyOf, GRID, ALL_KEYS,
     playVerdict, startHand, applyAction, replayHand, flowOptions, flowContext,
     parseRange, rangePct, topPercent, analyzeHand, boardTexture, comboEquities, rangeCombos,
     CHARTS, POSITIONS, POS_LABEL, OPP_TYPES, STAGE_LABEL, LENS, analyze, estimateFlopPot,
-    rfiRange, vsOpenChart, handPctile, RANK_LIST, preflopGrid, FOURBET_POT_RANGE, FOURBET_CALL_RANGE, multiwayEquityMC, rangeEquityMC,
+    rfiRange, vsOpenChart, handPctile, RANK_LIST, preflopGrid, FOURBET_POT_RANGE, FOURBET_CALL_RANGE, multiwayEquityMC, rangeEquityMC, practiceHand, gradeChoice, flowActionFor,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.HoldemEngine = api;

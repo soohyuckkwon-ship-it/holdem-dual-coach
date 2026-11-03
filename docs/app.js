@@ -48,6 +48,7 @@
 
   // ───────── 핸드 진행 ─────────
   const isFlow = () => S.mode === 'flow';
+  const isPractice = () => S.mode === 'practice';
   const flowState = () => H.replayHand({ table: S.table, eff: S.eff, game: S.game, heroPos: S.heroPos }, S.flowActs);
   const SEAT_ACT = { fold: '폴드', check: '체크', call: '콜', bet: '벳', raise: '레이즈', allin: '올인' };
   // 첫 화면 예시: 내 차례까지 모두 폴드한 상태
@@ -308,6 +309,12 @@
     const boardField = $('#boardField');
     const boardHome = flow ? $('#flowBoardSlot') : $('[data-pane="post"]');
     if (boardField.parentElement !== boardHome) boardHome.prepend(boardField);
+    // 연습 모드는 입력 칸 대신 연습 설정만 보여 준다
+    const prac = isPractice();
+    $('#practiceGroup').hidden = !prac;
+    $('[data-cards="hero"]').closest('.group').hidden = prac;
+    $('#newHand').hidden = prac;
+    if (prac) { $('#manualGroup').hidden = true; $('#oppPosRow').hidden = true; renderPracticePanel(); }
     if (flow) {
       const st = flowState();
       $('#flowBoardSlot').hidden = st.street === 'preflop';
@@ -354,6 +361,7 @@
     if (isFlow()) syncFlowToInputs();
     sync();
     clearTimeout(timer);
+    if (isPractice()) { timer = setTimeout(renderPractice, 30); return; }
     timer = setTimeout(compute, 60);
   }
   function compute() {
@@ -386,10 +394,10 @@
   const miniCards = (cards) => `<span class="mini">${cards.map((c) => { const s = H.SUITS.indexOf(c[1]); return `<span class="mc suit-${s}">${c[0] === 'T' ? '10' : c[0]}${H.SUIT_SYM[s]}</span>`; }).join('')}</span>`;
   const WHO = { tight: ['T', '타이트 전문가'], balanced: ['B', '균형형 전문가'], judge: ['합', '합의'] };
 
-  function freqRows(actions, freq, pot, topIdx) {
+  function freqRows(actions, freq, pot, topIdx, mineIdx) {
     return actions.map((a, i) => {
       const f = freq[i] * 100;
-      return `<div class="fr ${i === topIdx ? 'top' : ''} ${f < 0.05 ? 'zero' : ''}">
+      return `<div class="fr ${i === topIdx ? 'top' : ''} ${i === mineIdx ? 'mine' : ''} ${f < 0.05 ? 'zero' : ''}">
         <div class="bar" style="width:${Math.min(100, f)}%;background:${actColor(a, pot)}"></div>
         <div class="name">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</div>
         <div class="val">${f.toFixed(1)}</div></div>`;
@@ -623,6 +631,102 @@
     window.claude.use('sample').then((s) => { if (s) { sample = s; if (last) renderResults(); } }).catch(() => {});
   }
 
+  // ───────── 연습 모드 ─────────
+  // 엔진이 무작위 카드·상대 액션으로 핸드를 진행해 내 차례에서 멈춘다. 고른 액션을 합의 빈도로 채점한다
+  const PRAC_KEY = 'holdem-dual-coach:practice';
+  const P = { spot: null, pick: null, busy: false, streets: ['preflop', 'flop', 'turn', 'river'], pos: 'any', score: { n: 0, good: 0, mixed: 0, bad: 0, loss: 0, streak: 0 } };
+  try {
+    const sv = JSON.parse(localStorage.getItem(PRAC_KEY) || 'null');
+    if (sv) { if (sv.score) Object.assign(P.score, sv.score); if (Array.isArray(sv.streets) && sv.streets.length) P.streets = sv.streets; if (sv.pos) P.pos = sv.pos; }
+  } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
+  function savePractice() { try { localStorage.setItem(PRAC_KEY, JSON.stringify({ score: P.score, streets: P.streets, pos: P.pos })); } catch (e) { /* 무시 */ } }
+  function renderPracticePanel() {
+    $$('#pracStreets [data-ps]').forEach((b) => b.setAttribute('aria-pressed', P.streets.includes(b.dataset.ps)));
+    if (P.pos !== 'any' && !posList().includes(P.pos)) P.pos = 'any';
+    $('#pracPos').innerHTML = [['any', '무작위']].concat(posList().map((p) => [p, H.POS_LABEL[p]]))
+      .map(([v, l]) => `<button class="chip" type="button" data-pp="${v}" aria-pressed="${P.pos === v}">${l}</button>`).join('');
+    const sc = P.score, rate = sc.n ? Math.round((sc.good + sc.mixed * 0.5) / sc.n * 100) : null;
+    $('#pracScore').innerHTML = `<span>문제<b>${sc.n}</b></span><span>정답<b>${sc.good}</b></span><span>혼합<b>${sc.mixed}</b></span><span>실수<b>${sc.bad}</b></span>`
+      + `<span>점수<b>${rate == null ? '—' : rate + '%'}</b></span><span>연속 정답<b>${sc.streak}</b></span>${sc.loss > 0 ? `<span>누적 EV 손실<b>${fmt1(sc.loss)}BB</b></span>` : ''}`;
+  }
+  function newProblem() {
+    P.busy = true; P.pick = null;
+    renderPractice();
+    setTimeout(() => {
+      let spot = null;
+      try {
+        spot = H.practiceHand({ table: S.table, eff: S.eff, game: S.game, stage: S.stage, oppType: S.oppType, streets: P.streets, heroPos: P.pos === 'any' ? null : P.pos }, (Math.random() * 4294967296) >>> 0);
+      } catch (e) { console.error(e); }
+      P.spot = spot; P.busy = false;
+      renderPractice();
+    }, 20);
+  }
+  function practiceLog(st) {
+    const items = [];
+    for (const street of STREETS) {
+      const es = st.log.filter((e) => e.street === street);
+      if (!es.length) continue;
+      const parts = [];
+      let folds = [];
+      const flush = () => { if (folds.length) parts.push(`${folds.join('·')} 폴드`); folds = []; };
+      for (const e of es) {
+        if (e.type === 'fold') { folds.push(H.POS_LABEL[e.pos] + (e.hero ? '(나)' : '')); continue; }
+        flush();
+        const amt = e.type === 'check' ? '' : ' ' + fmt1(e.to) + 'BB';
+        parts.push(`${H.POS_LABEL[e.pos]}${e.hero ? '(나)' : ''} ${SEAT_ACT[e.type]}${amt}`);
+      }
+      flush();
+      items.push(`<li><b>${STREET_LABEL[street]}</b> ${esc(parts.join(', '))}</li>`);
+    }
+    return items.length ? `<ol class="prac-log">${items.join('')}</ol>` : '<p class="hint">아직 아무도 액션하지 않았습니다 — 내가 첫 액션입니다.</p>';
+  }
+  function renderPractice() {
+    if (!isPractice()) return;
+    const box = $('#results');
+    if (P.busy) { box.innerHTML = '<div class="card-box empty-state">문제를 만드는 중…</div>'; setDock('연습', '문제를 만드는 중'); return; }
+    if (!P.spot) {
+      box.innerHTML = `<div class="card-box empty-state">연습 문제를 시작하세요.<div class="prac-picks"><button class="btn" type="button" data-pnext>첫 문제 받기</button></div></div>`;
+      setDock('연습', '새 문제를 받으세요');
+      return;
+    }
+    const sp = P.spot, st = sp.state, res = sp.res, A = res.actions, Cn = res.consensus;
+    const o = H.flowOptions(st), me = st.players[st.heroPos];
+    const n = BOARD_N[sp.street], board = sp.board.slice(0, n);
+    const meta = `${STREET_LABEL[sp.street]} · ${st.table}인 ${S.game === 'mtt' ? '토너먼트' : '캐시'} · 나 ${H.POS_LABEL[st.heroPos]} · 유효 ${fmt1(st.eff)}BB`;
+    const now = `팟 ${fmt1(st.pot)}BB · ${o.toCall > 0 ? `콜하려면 ${fmt1(o.toCall)}BB` : '체크 가능'} · 내 남은 스택 ${fmt1(me.stack)}BB`;
+    let html = `<div class="solver prac-q"><div class="solver-head"><div class="spot">${miniCards(sp.hero)}${board.length ? '<span class="meta">on</span>' + miniCards(board) : ''}</div><span class="solver-title">연습 문제</span></div>
+      <div class="prac-meta">${esc(meta)}</div>${practiceLog(st)}<div class="prac-now">${esc(now)} — 어떻게 할까요?</div>`;
+    if (P.pick == null) {
+      html += `<div class="prac-picks">${A.map((a, i) => `<button class="act-btn ${a.kind === 'fold' ? 'fold' : a.kind === 'check' || a.kind === 'call' ? 'call' : a.kind === 'allin' ? 'allin' : 'raise'}" type="button" data-pick="${i}">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</button>`).join('')}</div></div>`;
+      html += `<div class="card-box"><p class="hint">상대는 카드를 보지 않고 확률로 움직이고, 이전 내 결정은 합의 추천대로 자동 진행했습니다. 빈도는 실제 솔버가 아닌 근사 모델입니다.</p></div>`;
+      box.innerHTML = html;
+      setDock('연습', '액션을 고르세요');
+      return;
+    }
+    const g = H.gradeChoice(res, P.pick);
+    const head = { good: '정답!', mixed: '혼합 가능', bad: '실수' }[g.level];
+    const lossTxt = g.loss != null && g.loss >= 0.05 ? ` · EV 손실 약 ${fmt1(g.loss)}BB(근사)` : '';
+    html += `<div class="freq-table">${freqRows(A, Cn.freq, res.info.pot, Cn.top, P.pick)}</div>
+      <div class="verdict">추천 <em>${esc(A[Cn.top].label)}${A[Cn.top].sub ? ' (' + esc(A[Cn.top].sub) + ')' : ''}</em> · 점선 = 내 선택</div></div>`;
+    html = `<div class="prac-grade ${g.level}">${head}<small>내 선택 ${esc(A[P.pick].label)} ${pct0(g.mine)} · 추천 ${esc(A[g.top].label)} ${pct0(g.best)}${lossTxt}</small></div>` + html;
+    html += `<div class="card-box"><p class="handline">내 핸드: <b>${esc(res.info.heroDesc || '')}</b>${res.info.texture ? ` · 보드 ${esc(res.info.texture.label)}` : ''}${res.balanced.equity != null ? ` · 에퀴티 약 ${pct0(res.balanced.equity)}` : ''}${res.info.required != null ? ` · 필요 ${pct0(res.info.required)}` : ''}</p>
+      <div class="debate">${Cn.dialogue.map((d) => `<div class="msg ${d.who}"><div class="avatar ${d.who}">${WHO[d.who][0]}</div><div class="bubble"><div class="who">${WHO[d.who][1]}</div>${esc(d.text)}</div></div>`).join('')}</div>
+      <div class="prac-picks"><button class="btn" type="button" data-pnext>다음 문제</button></div></div>`;
+    box.innerHTML = html;
+    setDock(head, `추천 ${A[Cn.top].label}`);
+  }
+  function practicePick(i) {
+    if (!P.spot || P.pick != null) return;
+    P.pick = i;
+    const g = H.gradeChoice(P.spot.res, i), sc = P.score;
+    sc.n++; sc[g.level]++;
+    sc.streak = g.level === 'good' ? sc.streak + 1 : 0;
+    if (g.loss != null) sc.loss = Math.round((sc.loss + g.loss) * 10) / 10;
+    savePractice();
+    renderPracticePanel();
+    renderPractice();
+  }
+
   // ───────── 이벤트 ─────────
   function onFieldClick(e) {
     const b = e.target.closest('[data-v]');
@@ -652,7 +756,27 @@
     update();
   }
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.inputs [data-field]')) return onFieldClick(e);
+    if (e.target.closest('.inputs [data-field]')) {
+      const wasPractice = isPractice();
+      onFieldClick(e);
+      // 연습 모드로 들어오거나 설정이 바뀌면 새 문제
+      if (isPractice() && (!wasPractice || !P.spot || e.target.closest('[data-field="table"], [data-field="game"], [data-field="stage"]'))) newProblem();
+      return;
+    }
+    const pk = e.target.closest('[data-pick]');
+    if (pk) { practicePick(Number(pk.dataset.pick)); return; }
+    if (e.target.closest('[data-pnext], #pracNext')) { newProblem(); return; }
+    const ps = e.target.closest('[data-ps]');
+    if (ps) {
+      const v = ps.dataset.ps, on = P.streets.includes(v);
+      if (on && P.streets.length === 1) return; // 하나는 남긴다
+      P.streets = on ? P.streets.filter((x) => x !== v) : STREETS.filter((x) => x === v || P.streets.includes(x));
+      savePractice(); renderPracticePanel();
+      return;
+    }
+    const pp = e.target.closest('[data-pp]');
+    if (pp) { P.pos = pp.dataset.pp; savePractice(); renderPracticePanel(); return; }
+    if (e.target.closest('#pracReset')) { P.score = { n: 0, good: 0, mixed: 0, bad: 0, loss: 0, streak: 0 }; savePractice(); renderPracticePanel(); return; }
     const fa = e.target.closest('[data-ftype]');
     if (fa) { flowDo({ type: fa.dataset.ftype, to: parseFloat(fa.dataset.fto) || undefined }); return; }
     const fr = e.target.closest('[data-res]');
@@ -774,4 +898,5 @@
 
   renderPositions();
   update();
+  if (isPractice()) newProblem();
 })();
