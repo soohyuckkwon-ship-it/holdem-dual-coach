@@ -642,15 +642,58 @@
     if (sv) { if (sv.score) Object.assign(P.score, sv.score); if (sv.pos) P.pos = sv.pos; if (sv.playable === false) P.playable = false; }
   } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
   function savePractice() { try { localStorage.setItem(PRAC_KEY, JSON.stringify({ score: P.score, pos: P.pos, playable: P.playable })); } catch (e) { /* 무시 */ } }
+  // 결정 기록 (통계용, 최근 3000개). 항목: 스트리트·포지션·벳을 받았는지·고른 액션 계열·추천 계열·판정·점수(내 빈도/추천 빈도)·EV 손실
+  const LOG_KEY = 'holdem-dual-coach:practice-log';
+  let PLOG = [];
+  try { PLOG = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); if (!Array.isArray(PLOG)) PLOG = []; } catch (e) { PLOG = []; }
+  function saveLog() { try { localStorage.setItem(LOG_KEY, JSON.stringify(PLOG.slice(-3000))); } catch (e) { /* 무시 */ } }
+  const KIND_GROUP = { fold: 'fold', check: 'pass', call: 'pass', bet: 'aggr', raise: 'aggr', allin: 'aggr' };
   const GRADE_LABEL = { good: '정답', mixed: '혼합', bad: '실수' };
   function renderPracticePanel() {
     if (P.pos !== 'any' && !posList().includes(P.pos)) P.pos = 'any';
     $('#pracPos').innerHTML = [['any', '무작위']].concat(posList().map((x) => [x, H.POS_LABEL[x]]))
       .map(([v, l]) => `<button class="chip" type="button" data-pp="${v}" aria-pressed="${P.pos === v}">${l}</button>`).join('');
     $$('#pracPlayable [data-pplay]').forEach((b) => b.setAttribute('aria-pressed', String(P.playable) === b.dataset.pplay));
-    const sc = P.score, rate = sc.n ? Math.round((sc.good + sc.mixed * 0.5) / sc.n * 100) : null;
+    const sc = P.score;
     $('#pracScore').innerHTML = `<span>핸드<b>${sc.hands}</b></span><span>결정<b>${sc.n}</b></span><span>정답<b>${sc.good}</b></span><span>혼합<b>${sc.mixed}</b></span><span>실수<b>${sc.bad}</b></span>`
-      + `<span>점수<b>${rate == null ? '—' : rate + '%'}</b></span><span>연속 정답<b>${sc.streak}</b></span>${sc.loss > 0 ? `<span>누적 EV 손실<b>${fmt1(sc.loss)}BB</b></span>` : ''}`;
+      + `<span>연속 정답<b>${sc.streak}</b></span>`;
+    $('#pracStats').innerHTML = statsHTML();
+  }
+  // 플레이 점수: 결정마다 (내 액션의 합의 빈도 ÷ 추천 액션 빈도, 최대 1)의 평균 × 100
+  const scoreOf = (arr) => (arr.length ? Math.round(arr.reduce((t, d) => t + d.r, 0) / arr.length * 100) : null);
+  const gradeOf = (x) => (x == null ? '—' : x >= 90 ? 'S' : x >= 80 ? 'A' : x >= 70 ? 'B' : x >= 60 ? 'C' : 'D');
+  function statBar(label, arr, minN) {
+    const sc = scoreOf(arr);
+    const thin = arr.length < (minN || 10);
+    return `<div class="sbar"><span class="sl">${esc(label)}</span><div class="st"><i style="width:${sc == null ? 0 : sc}%" class="g${gradeOf(sc)}"></i></div><span class="sv">${sc == null ? '—' : sc}<small>${arr.length ? ` · ${arr.length}${thin ? ' (적음)' : ''}` : ''}</small></span></div>`;
+  }
+  function statsHTML() {
+    const L = PLOG;
+    if (!L.length) return '<p class="hint">결정을 하면 여기에 통계가 쌓입니다.</p>';
+    const total = scoreOf(L), recent = scoreOf(L.slice(-30));
+    const withLoss = L.filter((d) => d.l != null), loss100 = withLoss.length ? withLoss.reduce((t, d) => t + d.l, 0) / withLoss.length * 100 : null;
+    const cnt = (lv) => L.filter((d) => d.lv === lv).length;
+    // 실수·혼합 결정의 경향: 추천과 비교해 어느 쪽으로 틀렸는지
+    const off = L.filter((d) => d.lv !== 'good' && d.k !== d.tk);
+    const tend = [
+      ['폴드 과다', off.filter((d) => d.k === 'fold').length, '추천은 콜·레이즈인데 폴드'],
+      ['콜·체크 과다', off.filter((d) => d.k === 'pass' && d.tk === 'fold').length, '추천은 폴드인데 콜'],
+      ['소극적', off.filter((d) => d.k === 'pass' && d.tk === 'aggr').length, '추천은 벳·레이즈인데 콜·체크'],
+      ['공격 과다', off.filter((d) => d.k === 'aggr').length, '추천은 폴드·콜·체크인데 벳·레이즈'],
+    ];
+    const tmax = Math.max(1, ...tend.map((x) => x[1]));
+    const worst = tend.slice().sort((a, b) => b[1] - a[1])[0];
+    const by = (key, vals, labels) => vals.map((v) => statBar(labels ? labels[v] : v, L.filter((d) => d[key] === v))).join('');
+    const posVals = posList().filter((x) => L.some((d) => d.p === x));
+    return `<div class="sbig"><div class="sgrade g${gradeOf(total)}">${gradeOf(total)}</div><div><div class="snum">${total}<small>점</small></div>
+        <div class="hint">결정 ${L.length}개 · 정답 ${cnt('good')} · 혼합 ${cnt('mixed')} · 실수 ${cnt('bad')}${L.length < 50 ? ' · 50개 이상부터 믿을 만해요' : ''}</div>
+        <div class="hint">최근 30결정 ${recent}점${L.length > 30 ? (recent > total ? ' ↑' : recent < total ? ' ↓' : '') : ''}${loss100 != null ? ` · EV 손실 ${fmt1(loss100)}BB/100결정(포스트플랍)` : ''}</div></div></div>
+      <h4>스트리트별</h4>${by('s', STREETS.filter((x) => L.some((d) => d.s === x)), STREET_LABEL)}
+      <h4>상황별</h4>${statBar('먼저 액션', L.filter((d) => !d.f))}${statBar('벳·레이즈를 받음', L.filter((d) => d.f))}
+      <h4>포지션별</h4>${by('p', posVals, H.POS_LABEL)}
+      <h4>틀린 방향</h4>${off.length ? tend.map(([n, c, d]) => `<div class="sbar" title="${esc(d)}"><span class="sl">${n}</span><div class="st"><i style="width:${c / tmax * 100}%" class="tend"></i></div><span class="sv">${c}</span></div>`).join('')
+        + (worst[1] ? `<p class="hint">가장 많은 실수: <b>${worst[0]}</b> — ${esc(worst[2])}</p>` : '') : '<p class="hint">아직 틀린 결정이 없습니다.</p>'}
+      <p class="hint">점수 = 결정마다 (내가 고른 액션의 합의 빈도 ÷ 추천 액션 빈도, 최대 1)의 평균. 근사 모델 기준입니다.</p>`;
   }
   function newProblem() {
     P.busy = true; P.fb = null;
@@ -682,14 +725,16 @@
       const th = Math.PI / 2 + 2 * Math.PI * (i - hi) / n;
       const pl = st.players[pos], me = pos === st.heroPos;
       const last = st.log.filter((e) => e.pos === pos && e.street === st.street).pop();
+      // 이번 스트리트 액션은 카드 위 말풍선으로 (금액 포함)
       let badge = '';
-      if (!pl.inHand) badge = '<span class="pa fold">폴드</span>';
-      else if (pl.allin) badge = '<span class="pa allin">올인</span>';
-      else if (last) badge = `<span class="pa ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}</span>`;
+      const amt = last && last.type !== 'check' && last.type !== 'fold' && last.to > 0 ? ' ' + fmt1(last.to) : '';
+      if (!pl.inHand) badge = '<span class="pact fold">폴드</span>';
+      else if (pl.allin) badge = `<span class="pact allin">올인${amt}</span>`;
+      else if (last) badge = `<span class="pact ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}${amt}</span>`;
       const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true)) : '';
       const x = 50 + 43 * Math.cos(th), y = 50 + 40 * Math.sin(th);
       const cls = `pseat ${me ? 'me' : ''} ${pos === st.toAct && !p.end ? 'turn' : ''} ${pl.inHand ? '' : 'out'} ${winners.includes(pos) ? 'win' : ''}`;
-      let html = `<div class="${cls}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%"><div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? ' · 나' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span>${badge}</div>`;
+      let html = `<div class="${cls} ${cards ? '' : 'nocards'}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%">${badge}<div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? ' · 나' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span></div>`;
       // 이번 스트리트에 건 칩은 자리와 가운데 사이에 둔다
       if (pl.bet > 0 && !p.end) html += `<div class="pchip ${last ? ACT_CLS[last.type] : ''}" style="left:${(50 + 26 * Math.cos(th)).toFixed(1)}%;top:${(50 + 22 * Math.sin(th)).toFixed(1)}%">${fmt1(pl.bet)}</div>`;
       if (pos === 'BTN') html += `<div class="pbtn" style="left:${(50 + 33 * Math.cos(th + 0.32)).toFixed(1)}%;top:${(50 + 30 * Math.sin(th + 0.32)).toFixed(1)}%">D</div>`;
@@ -701,9 +746,10 @@
     return `<div class="ptable"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
   }
   // 앞 스트리트까지의 액션을 색깔 칩으로 (폴드는 뺀다)
-  function practiceTimeline(st) {
+  function practiceTimeline(st, ended) {
     const rows = [];
     for (const street of STREETS) {
+      if (!ended && street === st.street) break; // 이번 스트리트는 자리 위 말풍선으로 보인다
       const es = st.log.filter((e) => e.street === street && e.type !== 'fold');
       if (!es.length) continue;
       rows.push(`<div class="ptl"><span class="ptl-s">${STREET_LABEL[street]}</span>${es.map((e) => `<span class="pa ${ACT_CLS[e.type]} ${e.hero ? 'me' : ''}">${H.POS_LABEL[e.pos]} ${SEAT_ACT[e.type]}${e.type === 'check' ? '' : ' ' + fmt1(e.to)}</span>`).join('')}</div>`);
@@ -738,6 +784,8 @@
       html += `<h3>이번 핸드의 내 결정</h3><ol class="prac-decs">${D.map((d) => `<li><span class="badge ${d.grade.level}">${GRADE_LABEL[d.grade.level]}</span> ${STREET_LABEL[d.street]} · ${esc(d.label)}${d.grade.level !== 'good' ? ` <small>(추천 ${esc(d.top)})</small>` : ''}</li>`).join('')}</ol>`;
       if (loss >= 0.05) html += `<p class="hint">이번 핸드 EV 손실 합계 약 ${fmt1(loss)}BB (포스트플랍만, 근사)</p>`;
     }
+    const tot = scoreOf(PLOG);
+    if (tot != null) html += `<p class="prac-total">내 플레이 점수 <b>${tot}점</b> <span class="sgrade-mini g${gradeOf(tot)}">${gradeOf(tot)}</span> <small>결정 ${PLOG.length}개 기준 · 자세한 통계는 연습 모드 칸의 "내 플레이 통계"</small></p>`;
     html += `<div class="prac-picks"><button class="btn" type="button" data-pnext>다음 핸드</button></div></div>`;
     return html;
   }
@@ -754,7 +802,7 @@
     }
     const st = p.s;
     const fbLine = P.fb ? `<div class="prac-grade ${P.fb.grade.level} slim">직전 ${STREET_LABEL[P.fb.street]} ${esc(P.fb.label)} → ${P.fb.grade.level === 'good' ? '정답!' : P.fb.grade.level === 'mixed' ? '혼합 가능' : '실수'} <small>추천 ${esc(P.fb.top)} ${pct0(P.fb.grade.best)}</small></div>` : '';
-    let html = fbLine + `<div class="card-box prac-tablebox">${practiceTableHTML(p)}${practiceTimeline(st)}`;
+    let html = fbLine + `<div class="card-box prac-tablebox">${practiceTableHTML(p)}${practiceTimeline(st, !!p.end)}`;
     if (!p.end) {
       html += `<div class="prac-picks">${p.res.actions.map((a, i) => `<button class="act-btn ${pickClass(a)}" type="button" data-pick="${i}">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</button>`).join('')}</div></div>`;
       if (P.fb) html += `<h3 class="prac-h">직전 결정 채점</h3>` + feedbackHTML(P.fb);
@@ -770,7 +818,10 @@
   function practicePick(i) {
     const p = P.hand;
     if (!p || p.end || !p.res) return;
+    const facing = H.flowOptions(p.s).toCall > 0, street = p.s.street, pos = p.s.heroPos, acts = p.res.actions;
     const g = H.practicePlay(p, i), sc = P.score;
+    PLOG.push({ s: street, p: pos, f: facing ? 1 : 0, k: KIND_GROUP[acts[i].kind], tk: KIND_GROUP[acts[g.top].kind], lv: g.level, r: Math.round(Math.min(1, g.best > 0 ? g.mine / g.best : 1) * 1000) / 1000, l: g.loss == null ? null : Math.round(g.loss * 100) / 100, t: Date.now() });
+    saveLog();
     P.fb = p.decisions[p.decisions.length - 1];
     sc.n++; sc[g.level]++;
     sc.streak = g.level === 'good' ? sc.streak + 1 : 0;
@@ -824,7 +875,7 @@
     if (pl) { P.playable = pl.dataset.pplay === 'true'; savePractice(); renderPracticePanel(); return; }
     const pp = e.target.closest('[data-pp]');
     if (pp) { P.pos = pp.dataset.pp; savePractice(); renderPracticePanel(); return; }
-    if (e.target.closest('#pracReset')) { P.score = NEW_SCORE(); savePractice(); renderPracticePanel(); return; }
+    if (e.target.closest('#pracReset')) { P.score = NEW_SCORE(); PLOG = []; saveLog(); savePractice(); renderPracticePanel(); return; }
     const fa = e.target.closest('[data-ftype]');
     if (fa) { flowDo({ type: fa.dataset.ftype, to: parseFloat(fa.dataset.fto) || undefined }); return; }
     const fr = e.target.closest('[data-res]');
