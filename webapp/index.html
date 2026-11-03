@@ -183,19 +183,44 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .ppot b { font-family: var(--font-display); font-size: 20px; color: var(--felt-ink); }
 .pseat { position: absolute; transform: translate(-50%, -50%); width: 84px; text-align: center; padding: 4px 3px 5px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); line-height: 1.15; box-shadow: 0 4px 10px -6px rgba(0,0,0,0.4); z-index: 2; }
 .pseat .pc { height: 26px; margin-top: -18px; margin-bottom: 1px; }
-.pseat .pc .mc { width: 20px; height: 26px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+.pseat .pc .mc { min-width: 22px; width: auto; padding: 0 2px; height: 26px; font-size: 11px; letter-spacing: -0.5px; display: inline-flex; align-items: center; justify-content: center; }
 .mc.back { background: repeating-linear-gradient(45deg, #7a2633 0 3px, #9a3342 3px 6px) !important; border: 1px solid #fff; }
 .pseat .pp { display: block; font-family: var(--font-display); font-weight: 700; font-size: 14px; }
 .pseat .ps { display: block; font-size: 10px; color: var(--ink-2); font-family: var(--font-mono); }
 .pseat.me { border: 2px solid var(--gold); }
 .pseat.me .pc { height: 40px; margin-top: -32px; }
-.pseat.me .pc .mc { width: 30px; height: 40px; font-size: 16px; }
+.pseat.me .pc .mc { min-width: 32px; width: auto; padding: 0 3px; height: 40px; font-size: 16px; }
 .pseat.turn { box-shadow: 0 0 0 3px var(--gold), 0 0 16px 2px color-mix(in srgb, var(--gold) 60%, transparent); }
 .pseat.out { opacity: 0.4; }
 .pseat.win { background: color-mix(in srgb, var(--gold) 28%, var(--surface)); }
 .pa { display: inline-block; margin-top: 2px; border-radius: 6px; padding: 1px 6px; font-size: 11px; font-weight: 700; color: #fff; background: var(--ink-3); white-space: nowrap; }
 .pa.fold { background: #8a8f98; } .pa.check { background: var(--call); } .pa.call { background: var(--call); }
 .pa.raise { background: var(--bet3); } .pa.allin { background: var(--allin); }
+/* 연습 통계 */
+.pstats { margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--surface-2); }
+.pstats summary { font-weight: 700; cursor: pointer; }
+.pstats h4 { margin: 10px 0 4px; font-size: 12px; color: var(--ink-2); }
+.sbig { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.sgrade { width: 54px; height: 54px; border-radius: 12px; display: grid; place-items: center; font-family: var(--font-display); font-size: 32px; font-weight: 800; color: #fff; background: var(--ink-3); flex: none; }
+.snum { font-family: var(--font-display); font-size: 30px; font-weight: 700; line-height: 1; }
+.snum small { font-size: 14px; margin-left: 2px; }
+.sbar { display: grid; grid-template-columns: 96px 1fr auto; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; }
+.sbar .st { height: 10px; background: var(--surface); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.sbar .st i { display: block; height: 100%; background: var(--ink-3); }
+.sbar .sv { font-family: var(--font-mono); font-weight: 600; min-width: 58px; text-align: right; }
+.sbar .sv small { font-weight: 400; color: var(--ink-2); }
+.gS { background: #1f8a5b !important; } .gA { background: #3aa06b !important; } .gB { background: #b8962a !important; } .gC { background: #c8742a !important; } .gD { background: #b23b3b !important; }
+.sbar .st i.tend { background: var(--bet3); }
+.prac-total { margin: 10px 0 4px; font-size: 15px; }
+.prac-total small { display: block; color: var(--ink-2); font-size: 12px; }
+.sgrade-mini { display: inline-block; color: #fff; border-radius: 6px; padding: 0 7px; font-weight: 800; }
+/* 자리 위 액션 말풍선: 카드 바로 위 */
+.pact { position: absolute; left: 50%; bottom: calc(100% + 22px); transform: translateX(-50%); z-index: 3; white-space: nowrap; border-radius: 8px; padding: 2px 9px; font-size: 13px; font-weight: 800; color: #fff; background: var(--ink-3); box-shadow: 0 3px 8px -3px rgba(0,0,0,0.5); }
+.pact::after { content: ''; position: absolute; left: 50%; top: 100%; width: 8px; height: 8px; background: inherit; transform: translate(-50%, -55%) rotate(45deg); }
+.pseat.me .pact { bottom: calc(100% + 36px); }
+.pseat.nocards .pact { bottom: calc(100% + 4px); }
+.pact.fold { background: #8a8f98; } .pact.check, .pact.call { background: var(--call); }
+.pact.raise { background: var(--bet3); } .pact.allin { background: var(--allin); }
 .pchip { position: absolute; transform: translate(-50%, -50%); z-index: 1; min-width: 26px; padding: 2px 6px; border-radius: 999px; background: #f3e4b5; color: #3a2a06; font-family: var(--font-mono); font-size: 11px; font-weight: 700; border: 2px dashed #b88a1c; }
 .pbtn { position: absolute; transform: translate(-50%, -50%); z-index: 1; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 800; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
 .ptls { display: grid; gap: 4px; margin: 2px 4px 4px; }
@@ -419,6 +444,7 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
         </div>
         <div class="row"><span class="lbl">내 자리</span><div class="chips small" id="pracPos"></div></div>
         <div class="prac-score" id="pracScore"></div>
+        <details class="pstats" open><summary>내 플레이 통계</summary><div id="pracStats"></div></details>
         <button class="linkish" type="button" id="pracReset">점수 초기화</button>
       </div>
 
