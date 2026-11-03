@@ -369,6 +369,66 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 @media (max-width: 960px) { .dock { display: flex; } }
 .disclaimer { font-size: 12px; color: var(--ink-3); margin: 4px 0 0; }
 @media (prefers-reduced-motion: reduce) { .fr .bar { transition: none; } }
+/* 연습 화면 1.5배 (2026-11-03 요청) */
+.ptable { height: 570px; }
+.pfelt { inset: 52px 58px; border-width: 8px; }
+.pboard { gap: 6px; }
+.pboard .mc { width: 46px; height: 64px; font-size: 23px; border-radius: 6px; }
+.ppot { margin-top: 9px; font-size: 18px; }
+.ppot b { font-size: 30px; }
+.pseat { width: 126px; padding: 6px 4px 8px; border-radius: 14px; }
+.pseat .pc { height: 39px; margin-top: -27px; margin-bottom: 2px; }
+.pseat .pc .mc { min-width: 33px; height: 39px; font-size: 17px; padding: 0 3px; border-radius: 5px; }
+.pseat .pp { font-size: 21px; white-space: nowrap; }
+.pseat .pp small { font-size: 0.7em; color: var(--gold); font-weight: 800; }
+.pseat .ps { font-size: 15px; }
+.pseat.me .pc { height: 60px; margin-top: -48px; }
+.pseat.me .pc .mc { min-width: 46px; height: 60px; font-size: 24px; padding: 0 4px; }
+.pact { bottom: calc(100% + 33px); border-radius: 10px; padding: 3px 13px; font-size: 19px; }
+.pact::after { width: 12px; height: 12px; }
+.pseat.me .pact { bottom: calc(100% + 54px); }
+.pseat.nocards .pact { bottom: calc(100% + 6px); }
+.pchip { min-width: 39px; padding: 3px 9px; font-size: 16px; border-width: 3px; }
+.pbtn { width: 30px; height: 30px; font-size: 16px; }
+.ptl { gap: 6px; }
+.ptl-s { font-size: 16px; width: 72px; }
+.ptls .pa { font-size: 16px; padding: 2px 9px; border-radius: 8px; }
+.prac-picks { gap: 12px; }
+.prac-picks .act-btn { font-size: 22px; min-height: 64px; padding: 12px 20px; border-radius: 12px; }
+.prac-grade.slim { font-size: 20px; padding: 9px 16px; }
+.prac-grade { font-size: 24px; }
+.prac-grade small { font-size: 18px; }
+.prac-result { font-size: 23px; }
+.prac-total { font-size: 21px; }
+.prac-total small { font-size: 17px; }
+.prac-decs { font-size: 19px; }
+.badge { font-size: 16px; padding: 1px 9px; }
+.prac-sd > div { font-size: 19px; }
+.prac-fb .facts { font-size: 18px; }
+.prac-h { font-size: 20px; }
+@media (max-width: 520px) {
+  /* 휴대폰은 자리 9개가 들어가도록 1.3배 정도로 */
+  .ptable { height: 500px; }
+  .pfelt { inset: 40px 26px; }
+  .pseat { width: 80px; padding: 4px 2px 6px; }
+  .pseat .pp { font-size: 15px; letter-spacing: -0.3px; }
+  .pseat .ps { font-size: 12px; }
+  .pseat .pc { height: 32px; margin-top: -22px; }
+  .pseat .pc .mc { min-width: 27px; height: 32px; font-size: 14px; }
+  .pseat.me .pc { height: 50px; margin-top: -40px; }
+  .pseat.me .pc .mc { min-width: 38px; height: 50px; font-size: 20px; }
+  .pact { font-size: 15px; padding: 2px 9px; bottom: calc(100% + 27px); }
+  .pseat.me .pact { bottom: calc(100% + 45px); }
+  .pboard .mc { width: 34px; height: 48px; font-size: 18px; }
+  .ppot { font-size: 15px; } .ppot b { font-size: 24px; }
+  .pchip { font-size: 13px; padding: 2px 7px; }
+  .prac-picks .act-btn { font-size: 18px; min-height: 54px; padding: 10px 14px; }
+  .ptl-s { font-size: 14px; width: 56px; } .ptls .pa { font-size: 14px; }
+  .ptable.many .pseat { width: 68px; }
+  .ptable.many .pseat .pp { font-size: 14px; }
+  .ptable.many .pseat .pc .mc { min-width: 24px; height: 30px; font-size: 13px; }
+  .ptable.many .pseat .pc { height: 30px; margin-top: -21px; }
+}
 </style>
 </head>
 <body>

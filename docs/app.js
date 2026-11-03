@@ -732,9 +732,12 @@
       else if (pl.allin) badge = `<span class="pact allin">올인${amt}</span>`;
       else if (last) badge = `<span class="pact ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}${amt}</span>`;
       const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true)) : '';
-      const x = 50 + 43 * Math.cos(th), y = 50 + 40 * Math.sin(th);
+      // 좁은 화면은 자리를 안쪽으로 모아 양 끝이 잘리지 않게 한다
+      const rx = window.innerWidth < 520 ? 37 : 43;
+      const ry = window.innerWidth < 520 ? 43 : 40;
+      const x = 50 + rx * Math.cos(th), y = 50 + ry * Math.sin(th);
       const cls = `pseat ${me ? 'me' : ''} ${pos === st.toAct && !p.end ? 'turn' : ''} ${pl.inHand ? '' : 'out'} ${winners.includes(pos) ? 'win' : ''}`;
-      let html = `<div class="${cls} ${cards ? '' : 'nocards'}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%">${badge}<div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? ' · 나' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span></div>`;
+      let html = `<div class="${cls} ${cards ? '' : 'nocards'}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%">${badge}<div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? '<small> 나</small>' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span></div>`;
       // 이번 스트리트에 건 칩은 자리와 가운데 사이에 둔다
       if (pl.bet > 0 && !p.end) html += `<div class="pchip ${last ? ACT_CLS[last.type] : ''}" style="left:${(50 + 26 * Math.cos(th)).toFixed(1)}%;top:${(50 + 22 * Math.sin(th)).toFixed(1)}%">${fmt1(pl.bet)}</div>`;
       if (pos === 'BTN') html += `<div class="pbtn" style="left:${(50 + 33 * Math.cos(th + 0.32)).toFixed(1)}%;top:${(50 + 30 * Math.sin(th + 0.32)).toFixed(1)}%">D</div>`;
@@ -743,7 +746,7 @@
     const shown = sd ? 5 : BOARD_N[st.street];
     const board = p.board.slice(0, shown).map(cstr);
     const slots = board.map((c) => miniCards([c])).join('') + Array.from({ length: 5 - board.length }, () => '<span class="mini"><span class="mc slot"></span></span>').join('');
-    return `<div class="ptable"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
+    return `<div class="ptable ${n >= 8 ? 'many' : ''}"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
   }
   // 앞 스트리트까지의 액션을 색깔 칩으로 (폴드는 뺀다)
   function practiceTimeline(st, ended) {
@@ -995,6 +998,9 @@
     window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
   }
 
+  // 화면 폭이 바뀌면 연습 테이블 자리 배치를 다시 그린다
+  let rzT = null;
+  window.addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => { if (isPractice() && !P.busy) renderPractice(); }, 150); });
   renderPositions();
   update();
   if (isPractice()) newProblem();
