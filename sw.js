@@ -1,5 +1,5 @@
 // 빌드에서 생성됨 — 직접 고치지 마세요 (tools/build.mjs)
-const CACHE = 'dual-coach-5dd23c22d2';
+const CACHE = 'dual-coach-d404812dfc';
 const ASSETS = ["./","index.html","engine.js","app.js","manifest.webmanifest","icon.svg","icon-192.png","icon-512.png","apple-touch-icon.png"];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
