@@ -171,6 +171,22 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .flow-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .act-btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 7px 11px; font-weight: 600; font-size: 13px; color: var(--ink); min-height: 36px; }
 .act-btn:hover { border-color: var(--ink-3); }
+/* 연습 모드 */
+.prac-score { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.prac-score span { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; font-size: 13px; }
+.prac-score b { font-family: var(--font-mono); margin-left: 4px; }
+.prac-q .prac-meta { font-size: 13px; opacity: 0.85; }
+.prac-q .prac-log { margin: 8px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.prac-q .prac-now { margin-top: 10px; font-weight: 600; font-size: 15px; }
+.prac-picks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.prac-picks .act-btn { font-size: 15px; min-height: 44px; padding: 8px 14px; }
+.prac-picks .act-btn small { font-weight: 500; color: var(--ink-2); margin-left: 4px; }
+.prac-grade { border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 17px; margin-bottom: 10px; }
+.prac-grade.good { background: color-mix(in srgb, var(--call) 18%, transparent); color: var(--call); }
+.prac-grade.mixed { background: color-mix(in srgb, var(--gold) 20%, transparent); color: var(--gold); }
+.prac-grade.bad { background: color-mix(in srgb, var(--allin) 16%, transparent); color: var(--allin); }
+.prac-grade small { display: block; font-weight: 500; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.fr.mine { outline: 2px dashed var(--felt-ink); outline-offset: -4px; }
 .act-btn b { font-family: var(--font-mono); font-weight: 600; margin-left: 6px; color: var(--ink-2); }
 .act-btn.top { border: 2px solid var(--gold); }
 .act-btn.fold { color: var(--fold); } .act-btn.call { color: var(--call); } .act-btn.raise { color: var(--bet3); } .act-btn.allin { color: var(--allin); }
@@ -290,7 +306,7 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
         <div class="group-head"><h2>게임</h2><button class="ghost" id="newHand" type="button">새 핸드</button></div>
         <div class="row">
           <div class="seg" data-field="game"><button type="button" data-v="cash">캐시</button><button type="button" data-v="mtt">토너먼트</button></div>
-          <div class="seg" data-field="mode"><button type="button" data-v="flow">핸드 진행</button><button type="button" data-v="manual">직접 입력</button></div>
+          <div class="seg" data-field="mode"><button type="button" data-v="flow">핸드 진행</button><button type="button" data-v="manual">직접 입력</button><button type="button" data-v="practice">연습</button></div>
         </div>
         <div class="row">
           <span class="lbl">인원</span>
@@ -351,6 +367,22 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
         <div class="field" id="flowBoardSlot"></div>
         <div id="flowActs"></div>
         <ol class="flow-log" id="flowLog"></ol>
+      </div>
+
+      <div class="group" id="practiceGroup" hidden>
+        <div class="group-head"><h2>연습 모드</h2><button class="ghost" id="pracNext" type="button">새 문제</button></div>
+        <p class="hint">무작위 카드와 상대 액션으로 상황을 만들고 내 차례에서 멈춥니다. 액션을 고르면 두 전문가 합의 빈도로 채점합니다(근사 모델 기준).</p>
+        <div class="row"><span class="lbl">스트리트</span>
+          <div class="chips small" id="pracStreets">
+            <button class="chip" type="button" data-ps="preflop">프리플랍</button>
+            <button class="chip" type="button" data-ps="flop">플랍</button>
+            <button class="chip" type="button" data-ps="turn">턴</button>
+            <button class="chip" type="button" data-ps="river">리버</button>
+          </div>
+        </div>
+        <div class="row"><span class="lbl">내 자리</span><div class="chips small" id="pracPos"></div></div>
+        <div class="prac-score" id="pracScore"></div>
+        <button class="linkish" type="button" id="pracReset">점수 초기화</button>
       </div>
 
       <div class="group" id="manualGroup">
