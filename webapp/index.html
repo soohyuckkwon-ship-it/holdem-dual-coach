@@ -171,6 +171,47 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .prac-grade.bad { background: color-mix(in srgb, var(--allin) 16%, transparent); color: var(--allin); }
 .prac-grade small { display: block; font-weight: 500; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
 .fr.mine { outline: 2px dashed var(--felt-ink); outline-offset: -4px; }
+/* 연습 테이블 그림 */
+.prac-tablebox { padding: 10px; }
+.ptable { position: relative; height: 380px; margin: 4px 2px 8px; }
+.pfelt { position: absolute; inset: 34px 38px; background: radial-gradient(ellipse at center, #1d5a43 0%, var(--felt) 70%); border-radius: 50% / 50%; border: 6px solid #5a3a22; box-shadow: inset 0 0 0 3px rgba(255,255,255,0.06), 0 10px 24px -14px rgba(0,0,0,0.6); }
+.pcenter { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--felt-ink); }
+.pboard { display: flex; gap: 4px; justify-content: center; }
+.pboard .mc { width: 30px; height: 42px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; }
+.mc.slot { background: rgba(255,255,255,0.08) !important; border: 1px dashed rgba(255,255,255,0.25); }
+.ppot { margin-top: 6px; font-size: 12px; color: var(--felt-dim); }
+.ppot b { font-family: var(--font-display); font-size: 20px; color: var(--felt-ink); }
+.pseat { position: absolute; transform: translate(-50%, -50%); width: 84px; text-align: center; padding: 4px 3px 5px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); line-height: 1.15; box-shadow: 0 4px 10px -6px rgba(0,0,0,0.4); z-index: 2; }
+.pseat .pc { height: 26px; margin-top: -18px; margin-bottom: 1px; }
+.pseat .pc .mc { width: 20px; height: 26px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+.mc.back { background: repeating-linear-gradient(45deg, #7a2633 0 3px, #9a3342 3px 6px) !important; border: 1px solid #fff; }
+.pseat .pp { display: block; font-family: var(--font-display); font-weight: 700; font-size: 14px; }
+.pseat .ps { display: block; font-size: 10px; color: var(--ink-2); font-family: var(--font-mono); }
+.pseat.me { border: 2px solid var(--gold); }
+.pseat.me .pc { height: 40px; margin-top: -32px; }
+.pseat.me .pc .mc { width: 30px; height: 40px; font-size: 16px; }
+.pseat.turn { box-shadow: 0 0 0 3px var(--gold), 0 0 16px 2px color-mix(in srgb, var(--gold) 60%, transparent); }
+.pseat.out { opacity: 0.4; }
+.pseat.win { background: color-mix(in srgb, var(--gold) 28%, var(--surface)); }
+.pa { display: inline-block; margin-top: 2px; border-radius: 6px; padding: 1px 6px; font-size: 11px; font-weight: 700; color: #fff; background: var(--ink-3); white-space: nowrap; }
+.pa.fold { background: #8a8f98; } .pa.check { background: var(--call); } .pa.call { background: var(--call); }
+.pa.raise { background: var(--bet3); } .pa.allin { background: var(--allin); }
+.pchip { position: absolute; transform: translate(-50%, -50%); z-index: 1; min-width: 26px; padding: 2px 6px; border-radius: 999px; background: #f3e4b5; color: #3a2a06; font-family: var(--font-mono); font-size: 11px; font-weight: 700; border: 2px dashed #b88a1c; }
+.pbtn { position: absolute; transform: translate(-50%, -50%); z-index: 1; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 800; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+.ptls { display: grid; gap: 4px; margin: 2px 4px 4px; }
+.ptl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ptl-s { font-size: 11px; color: var(--ink-2); width: 48px; }
+.ptl .pa.me { outline: 2px solid var(--gold); }
+.prac-grade.slim { padding: 6px 12px; font-size: 14px; }
+.prac-grade.slim small { display: inline; margin-left: 6px; }
+.prac-h { margin: 14px 0 6px; font-size: 14px; }
+@media (max-width: 520px) {
+  .ptable { height: 330px; }
+  .pfelt { inset: 30px 22px; }
+  .pseat { width: 66px; padding: 3px 2px 4px; }
+  .pseat .pp { font-size: 12px; }
+  .pboard .mc { width: 24px; height: 34px; font-size: 13px; }
+}
 .prac-fb { display: grid; gap: 10px; margin-bottom: 14px; }
 .prac-fb .prac-grade { margin-bottom: 0; }
 .prac-fb .facts { margin: 0; }

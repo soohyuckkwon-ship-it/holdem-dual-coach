@@ -668,23 +668,47 @@
       renderPractice();
     }, 20);
   }
-  function practiceLog(st) {
-    const items = [];
+  // 연습 테이블 그림: 내 자리를 아래 가운데에 두고, 자리마다 포지션·스택·이번 스트리트 액션·베팅 칩·카드를 그린다
+  const ACT_CLS = { fold: 'fold', check: 'check', call: 'call', bet: 'raise', raise: 'raise', allin: 'allin' };
+  function cardsHTML(cards, back) {
+    if (back) return '<span class="mini"><span class="mc back"></span><span class="mc back"></span></span>';
+    return miniCards(cards);
+  }
+  function practiceTableHTML(p) {
+    const st = p.s, order = H.POSITIONS[st.table], n = order.length, hi = order.indexOf(st.heroPos);
+    const sd = p.end && p.end.kind === 'showdown';
+    const winners = sd ? p.end.winners : p.end && p.end.kind === 'won' ? [p.end.winner] : [];
+    const seats = order.map((pos, i) => {
+      const th = Math.PI / 2 + 2 * Math.PI * (i - hi) / n;
+      const pl = st.players[pos], me = pos === st.heroPos;
+      const last = st.log.filter((e) => e.pos === pos && e.street === st.street).pop();
+      let badge = '';
+      if (!pl.inHand) badge = '<span class="pa fold">폴드</span>';
+      else if (pl.allin) badge = '<span class="pa allin">올인</span>';
+      else if (last) badge = `<span class="pa ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}</span>`;
+      const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true)) : '';
+      const x = 50 + 43 * Math.cos(th), y = 50 + 40 * Math.sin(th);
+      const cls = `pseat ${me ? 'me' : ''} ${pos === st.toAct && !p.end ? 'turn' : ''} ${pl.inHand ? '' : 'out'} ${winners.includes(pos) ? 'win' : ''}`;
+      let html = `<div class="${cls}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%"><div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? ' · 나' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span>${badge}</div>`;
+      // 이번 스트리트에 건 칩은 자리와 가운데 사이에 둔다
+      if (pl.bet > 0 && !p.end) html += `<div class="pchip ${last ? ACT_CLS[last.type] : ''}" style="left:${(50 + 26 * Math.cos(th)).toFixed(1)}%;top:${(50 + 22 * Math.sin(th)).toFixed(1)}%">${fmt1(pl.bet)}</div>`;
+      if (pos === 'BTN') html += `<div class="pbtn" style="left:${(50 + 33 * Math.cos(th + 0.32)).toFixed(1)}%;top:${(50 + 30 * Math.sin(th + 0.32)).toFixed(1)}%">D</div>`;
+      return html;
+    }).join('');
+    const shown = sd ? 5 : BOARD_N[st.street];
+    const board = p.board.slice(0, shown).map(cstr);
+    const slots = board.map((c) => miniCards([c])).join('') + Array.from({ length: 5 - board.length }, () => '<span class="mini"><span class="mc slot"></span></span>').join('');
+    return `<div class="ptable"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
+  }
+  // 앞 스트리트까지의 액션을 색깔 칩으로 (폴드는 뺀다)
+  function practiceTimeline(st) {
+    const rows = [];
     for (const street of STREETS) {
-      const es = st.log.filter((e) => e.street === street);
+      const es = st.log.filter((e) => e.street === street && e.type !== 'fold');
       if (!es.length) continue;
-      const parts = [];
-      let folds = [];
-      const flush = () => { if (folds.length) parts.push(`${folds.join('·')} 폴드`); folds = []; };
-      for (const e of es) {
-        if (e.type === 'fold') { folds.push(H.POS_LABEL[e.pos] + (e.hero ? '(나)' : '')); continue; }
-        flush();
-        parts.push(`${H.POS_LABEL[e.pos]}${e.hero ? '(나)' : ''} ${SEAT_ACT[e.type]}${e.type === 'check' ? '' : ' ' + fmt1(e.to) + 'BB'}`);
-      }
-      flush();
-      items.push(`<li${es.some((e) => e.hero) ? ' class="has-hero"' : ''}><b>${STREET_LABEL[street]}</b> ${esc(parts.join(', '))}</li>`);
+      rows.push(`<div class="ptl"><span class="ptl-s">${STREET_LABEL[street]}</span>${es.map((e) => `<span class="pa ${ACT_CLS[e.type]} ${e.hero ? 'me' : ''}">${H.POS_LABEL[e.pos]} ${SEAT_ACT[e.type]}${e.type === 'check' ? '' : ' ' + fmt1(e.to)}</span>`).join('')}</div>`);
     }
-    return items.length ? `<ol class="prac-log">${items.join('')}</ol>` : '<p class="hint">아직 아무도 액션하지 않았습니다 — 내가 첫 액션입니다.</p>';
+    return rows.length ? `<div class="ptls">${rows.join('')}</div>` : '';
   }
   const pickClass = (a) => (a.kind === 'fold' ? 'fold' : a.kind === 'check' || a.kind === 'call' ? 'call' : a.kind === 'allin' ? 'allin' : 'raise');
   // 방금 고른 결정의 채점 카드
@@ -706,7 +730,7 @@
     else msg = e.message || '핸드가 끝났습니다.';
     let html = `<div class="card-box prac-end"><h3>핸드 종료</h3><p class="prac-result">${esc(msg)}</p>`;
     if (e.kind === 'showdown') {
-      html += `<div class="prac-sd">${e.hands.map((h) => `<div class="${e.winners.includes(h.pos) ? 'win' : ''}"><b>${esc(H.POS_LABEL[h.pos])}${h.pos === st.heroPos ? '(나)' : ''}</b> ${miniCards(h.pos === st.heroPos ? p.hero.map(cstr) : p.opp[h.pos].map(cstr))} <span>${esc(h.desc)}</span></div>`).join('')}</div>`;
+      html += `<div class="prac-sd">${e.hands.map((h) => `<div class="${e.winners.includes(h.pos) ? 'win' : ''}"><b>${esc(H.POS_LABEL[h.pos])}${h.pos === st.heroPos ? '(나)' : ''}</b> <span>${esc(h.desc)}</span></div>`).join('')}</div>`;
     }
     const D = p.decisions;
     if (D.length) {
@@ -729,20 +753,16 @@
       return;
     }
     const st = p.s;
-    const shown = p.end && p.end.kind === 'showdown' ? 5 : BOARD_N[st.street];
-    const board = p.board.slice(0, shown).map(cstr);
-    const meta = `${st.table}인 ${S.game === 'mtt' ? '토너먼트' : '캐시'} · 나 ${H.POS_LABEL[st.heroPos]} · 유효 ${fmt1(st.eff)}BB · 결정 ${p.decisions.length}번째${p.end ? '까지' : ' 다음'}`;
-    let html = P.fb ? feedbackHTML(P.fb) : '';
-    html += `<div class="solver prac-q"><div class="solver-head"><div class="spot">${miniCards(p.hero.map(cstr))}${board.length ? '<span class="meta">on</span>' + miniCards(board) : ''}</div><span class="solver-title">${p.end ? '핸드 결과' : STREET_LABEL[st.street] + ' · 내 차례'}</span></div>
-      <div class="prac-meta">${esc(meta)}</div>${practiceLog(st)}`;
+    const fbLine = P.fb ? `<div class="prac-grade ${P.fb.grade.level} slim">직전 ${STREET_LABEL[P.fb.street]} ${esc(P.fb.label)} → ${P.fb.grade.level === 'good' ? '정답!' : P.fb.grade.level === 'mixed' ? '혼합 가능' : '실수'} <small>추천 ${esc(P.fb.top)} ${pct0(P.fb.grade.best)}</small></div>` : '';
+    let html = fbLine + `<div class="card-box prac-tablebox">${practiceTableHTML(p)}${practiceTimeline(st)}`;
     if (!p.end) {
-      const o = H.flowOptions(st), me = st.players[st.heroPos];
-      html += `<div class="prac-now">팟 ${fmt1(st.pot)}BB · ${o.toCall > 0 ? `콜하려면 ${fmt1(o.toCall)}BB` : '체크 가능'} · 내 남은 스택 ${fmt1(me.stack)}BB — 어떻게 할까요?</div>
-        <div class="prac-picks">${p.res.actions.map((a, i) => `<button class="act-btn ${pickClass(a)}" type="button" data-pick="${i}">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</button>`).join('')}</div></div>`;
+      html += `<div class="prac-picks">${p.res.actions.map((a, i) => `<button class="act-btn ${pickClass(a)}" type="button" data-pick="${i}">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</button>`).join('')}</div></div>`;
+      if (P.fb) html += `<h3 class="prac-h">직전 결정 채점</h3>` + feedbackHTML(P.fb);
       box.innerHTML = html;
       setDock(STREET_LABEL[st.street] + ' 내 차례', P.fb ? `직전 ${GRADE_LABEL[P.fb.grade.level]}` : '액션을 고르세요');
     } else {
       html += '</div>' + endHTML(p);
+      if (P.fb) html += `<h3 class="prac-h">마지막 결정 채점</h3>` + feedbackHTML(P.fb);
       box.innerHTML = html;
       setDock('핸드 종료', `결정 ${p.decisions.length}번`);
     }
