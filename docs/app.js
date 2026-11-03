@@ -312,6 +312,7 @@
     // 연습 모드는 입력 칸 대신 연습 설정만 보여 준다
     const prac = isPractice();
     $('#practiceGroup').hidden = !prac;
+    document.body.classList.toggle('practice-mode', prac);
     $('[data-cards="hero"]').closest('.group').hidden = prac;
     $('#newHand').hidden = prac;
     if (prac) { $('#manualGroup').hidden = true; $('#oppPosRow').hidden = true; renderPracticePanel(); }
@@ -728,7 +729,7 @@
       // 이번 스트리트 액션은 카드 위 말풍선으로 (금액 포함)
       let badge = '';
       const amt = last && last.type !== 'check' && last.type !== 'fold' && last.to > 0 ? ' ' + fmt1(last.to) : '';
-      if (!pl.inHand) badge = '<span class="pact fold">폴드</span>';
+      if (!pl.inHand) badge = ''; // 폴드한 자리는 흐리게 하고 스택 자리에 '폴드'를 쓴다 (말풍선이 옆자리를 가리지 않게)
       else if (pl.allin) badge = `<span class="pact allin">올인${amt}</span>`;
       else if (last) badge = `<span class="pact ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}${amt}</span>`;
       const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true)) : '';
@@ -737,9 +738,10 @@
       const ry = window.innerWidth < 520 ? 43 : 40;
       const x = 50 + rx * Math.cos(th), y = 50 + ry * Math.sin(th);
       const cls = `pseat ${me ? 'me' : ''} ${pos === st.toAct && !p.end ? 'turn' : ''} ${pl.inHand ? '' : 'out'} ${winners.includes(pos) ? 'win' : ''}`;
-      let html = `<div class="${cls} ${cards ? '' : 'nocards'}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%">${badge}<div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? '<small> 나</small>' : ''}</span><span class="ps">${fmt1(pl.stack)}BB</span></div>`;
+      let html = `<div class="${cls} ${cards ? '' : 'nocards'}" style="left:${x.toFixed(1)}%;top:${y.toFixed(1)}%">${badge}<div class="pc">${cards}</div><span class="pp">${H.POS_LABEL[pos]}${me ? '<small> 나</small>' : ''}</span><span class="ps">${pl.inHand ? fmt1(pl.stack) + 'BB' : '폴드'}</span></div>`;
       // 이번 스트리트에 건 칩은 자리와 가운데 사이에 둔다
-      if (pl.bet > 0 && !p.end) html += `<div class="pchip ${last ? ACT_CLS[last.type] : ''}" style="left:${(50 + 26 * Math.cos(th)).toFixed(1)}%;top:${(50 + 22 * Math.sin(th)).toFixed(1)}%">${fmt1(pl.bet)}</div>`;
+      // 칩은 자리와 가운데 사이. 내 칩만 옆으로 비껴 둬서 내 카드에 가리지 않게 한다
+      if (pl.bet > 0 && !p.end) { const off = me ? 0.38 : 0; html += `<div class="pchip ${last ? ACT_CLS[last.type] : ''}" style="left:${(50 + 30 * Math.cos(th + off)).toFixed(1)}%;top:${(50 + 24 * Math.sin(th + off)).toFixed(1)}%">${fmt1(pl.bet)}</div>`; }
       if (pos === 'BTN') html += `<div class="pbtn" style="left:${(50 + 33 * Math.cos(th + 0.32)).toFixed(1)}%;top:${(50 + 30 * Math.sin(th + 0.32)).toFixed(1)}%">D</div>`;
       return html;
     }).join('');
@@ -760,15 +762,31 @@
     return rows.length ? `<div class="ptls">${rows.join('')}</div>` : '';
   }
   const pickClass = (a) => (a.kind === 'fold' ? 'fold' : a.kind === 'check' || a.kind === 'call' ? 'call' : a.kind === 'allin' ? 'allin' : 'raise');
+  // 두 전문가 설명: 각자 추천 액션·빈도, 내 선택을 얼마나 쓰는지, 이유, 그리고 둘의 토론
+  function expertsExplainHTML(d) {
+    const r = d.res, A = r.actions;
+    const card = (key, e, label, tag) => {
+      const top = e.freq.reduce((bi, x, i) => (x > e.freq[bi] ? i : bi), 0);
+      const mine = e.freq[d.pick] || 0;
+      const verdict = top === d.pick ? '내 선택과 같아요' : mine >= 0.1 ? `내 선택도 ${pct0(mine)} 섞어요` : `내 선택은 거의 안 써요 (${pct0(mine)})`;
+      return `<div class="pex ${key}"><div class="pex-head"><span class="avatar ${key}">${WHO[key][0]}</span><b>${label}</b><span class="tag">${tag}</span></div>
+        <div class="pex-rec">추천 <em>${esc(A[top].label)}${A[top].sub ? ' ' + esc(A[top].sub) : ''}</em> ${pct0(e.freq[top])} · ${verdict}</div>
+        <p class="pex-why">${esc(e.headline || '')}</p>
+        <ul class="pex-facts">${(e.facts || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+        <div class="mini-table">${miniRows(A, e.freq, r.info.pot)}</div></div>`;
+    };
+    return `<div class="pex-wrap">${card('tight', r.tight, '타이트 전문가', '밸류 중심·저분산')}${card('balanced', r.balanced, '균형형 전문가', '솔버 기준선')}</div>
+      <div class="pex-debate"><h4>두 전문가의 토론</h4><div class="debate">${r.consensus.dialogue.map((m) => `<div class="msg ${m.who}"><div class="avatar ${m.who}">${WHO[m.who][0]}</div><div class="bubble"><div class="who">${WHO[m.who][1]}</div>${esc(m.text)}</div></div>`).join('')}</div></div>`;
+  }
   // 방금 고른 결정의 채점 카드
   function feedbackHTML(d) {
     const g = d.grade, r = d.res, A = r.actions, Cn = r.consensus;
     const lossTxt = g.loss != null && g.loss >= 0.05 ? ` · EV 손실 약 ${fmt1(g.loss)}BB(근사)` : '';
     return `<div class="prac-fb"><div class="prac-grade ${g.level}">${STREET_LABEL[d.street]} 결정: ${g.level === 'good' ? '정답!' : g.level === 'mixed' ? '혼합 가능' : '실수'}
-        <small>내 선택 ${esc(d.label)} ${pct0(g.mine)} · 추천 ${esc(d.top)} ${pct0(g.best)}${lossTxt}</small></div>
+        <small>내 선택 ${esc(d.label)} ${pct0(g.mine)} · 합의 추천 ${esc(d.top)} ${pct0(g.best)}${lossTxt}</small></div>
       <div class="solver"><div class="freq-table">${freqRows(A, Cn.freq, r.info.pot, Cn.top, d.pick)}</div>
-      <div class="verdict">점선 = 내 선택 · 내 핸드 ${esc(r.info.heroDesc || '')}${r.balanced.equity != null ? ` · 에퀴티 약 ${pct0(r.balanced.equity)}` : ''}${r.info.required != null ? ` · 필요 ${pct0(r.info.required)}` : ''}</div></div>
-      <ul class="facts"><li><b>타이트</b> ${esc(r.tight.headline || '')}</li><li><b>균형형</b> ${esc(r.balanced.headline || '')}</li></ul></div>`;
+      <div class="verdict">합의 빈도 · 점선 = 내 선택 · 내 핸드 ${esc(r.info.heroDesc || '')}${r.balanced.equity != null ? ` · 에퀴티 약 ${pct0(r.balanced.equity)}` : ''}${r.info.required != null ? ` · 필요 ${pct0(r.info.required)}` : ''}</div></div>
+      ${expertsExplainHTML(d)}</div>`;
   }
   function endHTML(p) {
     const e = p.end, st = p.s;
@@ -784,7 +802,7 @@
     const D = p.decisions;
     if (D.length) {
       const loss = D.reduce((t, d) => t + (d.grade.loss || 0), 0);
-      html += `<h3>이번 핸드의 내 결정</h3><ol class="prac-decs">${D.map((d) => `<li><span class="badge ${d.grade.level}">${GRADE_LABEL[d.grade.level]}</span> ${STREET_LABEL[d.street]} · ${esc(d.label)}${d.grade.level !== 'good' ? ` <small>(추천 ${esc(d.top)})</small>` : ''}</li>`).join('')}</ol>`;
+      html += `<h3>이번 핸드의 내 결정 <small class="hint">(누르면 두 전문가 설명)</small></h3><ol class="prac-decs">${D.map((d, k) => `<li><details${k === D.length - 1 ? '' : ''}><summary><span class="badge ${d.grade.level}">${GRADE_LABEL[d.grade.level]}</span> ${STREET_LABEL[d.street]} · ${esc(d.label)}${d.grade.level !== 'good' ? ` <small>(추천 ${esc(d.top)})</small>` : ''}</summary>${expertsExplainHTML(d)}</details></li>`).join('')}</ol>`;
       if (loss >= 0.05) html += `<p class="hint">이번 핸드 EV 손실 합계 약 ${fmt1(loss)}BB (포스트플랍만, 근사)</p>`;
     }
     const tot = scoreOf(PLOG);
@@ -813,7 +831,7 @@
       setDock(STREET_LABEL[st.street] + ' 내 차례', P.fb ? `직전 ${GRADE_LABEL[P.fb.grade.level]}` : '액션을 고르세요');
     } else {
       html += '</div>' + endHTML(p);
-      if (P.fb) html += `<h3 class="prac-h">마지막 결정 채점</h3>` + feedbackHTML(P.fb);
+      if (P.fb) html += `<h3 class="prac-h">마지막 결정 채점과 설명</h3>` + feedbackHTML(P.fb);
       box.innerHTML = html;
       setDock('핸드 종료', `결정 ${p.decisions.length}번`);
     }
