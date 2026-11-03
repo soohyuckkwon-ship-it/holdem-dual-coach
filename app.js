@@ -1,0 +1,777 @@
+/* 홀덤 듀얼 코치 — 화면 로직 */
+(function () {
+  'use strict';
+  const H = window.HoldemEngine;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmt1 = (x) => (Math.round(x * 10) / 10).toString();
+  const pct0 = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
+
+  const STREETS = ['preflop', 'flop', 'turn', 'river'];
+  const STREET_LABEL = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' };
+  const BOARD_N = { preflop: 0, flop: 3, turn: 4, river: 5 };
+  const RESULT_OPTS = [
+    ['xx', '체크-체크'], ['hb', '내 벳 → 상대 콜'], ['ob', '상대 벳 → 내 콜'], ['rc', '상대 레이즈 → 내 콜'], ['hr', '내 레이즈 → 상대 콜'],
+  ];
+  const RESULT_MULT = { xx: 1, hb: 2, ob: 2, rc: 4, hr: 4 };
+  const RESULT_HISTORY = {
+    xx: [{ act: 'check' }], hb: [{ act: 'call' }], ob: [{ act: 'bet', frac: 0.5 }],
+    rc: [{ act: 'raise' }], hr: [{ act: 'bet', frac: 0.5 }, { act: 'call' }],
+  };
+  const LINE_FROM_PF = { open: 'opp_open_call', '3bet': 'opp_3bet_call', '4bet': 'opp_4bet_call', limp: 'limp' };
+  const STORE_KEY = 'holdem-dual-coach:v1';
+
+  const EXAMPLE = {
+    game: 'cash', table: 6, stage: 'middle', eff: 100,
+    heroPos: 'BTN', oppPos: 'BB', oppType: 'unknown',
+    hero: ['Ac', 'Kc'], board: ['Ad', '8h', '5c', null, null],
+    street: 'flop',
+    pfAction: 'none', raiseSize: '', heroOpen: '', limpers: 1,
+    line: null, multiway: 1,
+    potManual: { flop: null, turn: null, river: null },
+    results: { flop: 'hb', turn: 'hb' },
+    curAct: { flop: 'check', turn: 'check', river: 'check' },
+    amt: { flop: {}, turn: {}, river: {} },
+    example: true,
+    mode: 'flow', flowActs: [],
+  };
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  let S = clone(EXAMPLE);
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (saved) for (const k of ['game', 'table', 'stage', 'eff', 'oppType', 'mode']) if (saved[k] != null) S[k] = saved[k];
+  } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
+  function persist() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, mode: S.mode })); } catch (e) { /* 무시 */ }
+  }
+
+  // ───────── 핸드 진행 ─────────
+  const isFlow = () => S.mode === 'flow';
+  const flowState = () => H.replayHand({ table: S.table, eff: S.eff, game: S.game, heroPos: S.heroPos }, S.flowActs);
+  const SEAT_ACT = { fold: '폴드', check: '체크', call: '콜', bet: '벳', raise: '레이즈', allin: '올인' };
+  // 첫 화면 예시: 내 차례까지 모두 폴드한 상태
+  S.flowActs = (function () {
+    const s = flowState(), out = [];
+    while (s.status === 'playing' && s.toAct !== s.heroPos) { H.applyAction(s, { type: 'fold' }); out.push({ type: 'fold' }); }
+    return out;
+  })();
+  let actsReady = false;
+
+  function flowMessage(st) {
+    if (st.status === 'hero_folded') return '폴드했습니다. 핸드가 끝났습니다.';
+    if (st.status === 'won') return `상대가 모두 폴드했습니다. 팟 ${fmt1(st.pot)}BB를 가져갑니다.`;
+    if (st.status === 'runout') return `올인 — 더 결정할 것이 없습니다. 팟 ${fmt1(st.pot)}BB, 보드를 끝까지 봅니다.`;
+    if (st.status === 'showdown') return `쇼다운입니다. 팟 ${fmt1(st.pot)}BB.`;
+    return `${H.POS_LABEL[st.toAct]} 차례입니다. 상대 액션을 고르면 내 차례에 두 전문가의 빈도가 나옵니다.`;
+  }
+  function renderFlowTable(st) {
+    const order = H.POSITIONS[st.table], n = order.length, hi = order.indexOf(st.heroPos);
+    const seats = order.map((pos, i) => {
+      const th = Math.PI / 2 + 2 * Math.PI * (i - hi) / n;
+      const p = st.players[pos];
+      const lastAct = st.log.filter((e) => e.pos === pos && e.street === st.street).pop();
+      let act = '';
+      if (!p.inHand) act = '폴드';
+      else if (p.allin) act = '올인';
+      else if (lastAct) act = SEAT_ACT[lastAct.type] + (p.bet > 0 ? ' ' + fmt1(p.bet) : '');
+      else if (p.bet > 0) act = fmt1(p.bet);
+      const cls = `seat ${pos === st.heroPos ? 'me' : ''} ${pos === st.toAct ? 'turn' : ''} ${p.inHand ? '' : 'out'}`;
+      return `<div class="${cls}" style="left:${(50 + 42 * Math.cos(th)).toFixed(1)}%;top:${(50 + 39 * Math.sin(th)).toFixed(1)}%"><span class="p">${H.POS_LABEL[pos]}</span><span class="a">${esc(act)}</span></div>`;
+    }).join('');
+    $('#flowTable').innerHTML = `<div class="felt-center"><span>${STREET_LABEL[st.street]}<b>팟 ${fmt1(st.pot)}BB</b></span></div>${seats}`;
+    const log = $('#flowLog');
+    log.innerHTML = st.log.filter((e) => e.type !== 'fold').map((e) => `<li class="${e.hero ? 'me' : ''}">${STREET_LABEL[e.street]} · ${H.POS_LABEL[e.pos]} ${SEAT_ACT[e.type]}${e.to > 0 && e.type !== 'check' ? ' ' + fmt1(e.to) + 'BB' : ''}</li>`).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+  // 액션 바로 아래에 두는 되돌리기. 마지막 액션을 이름으로 보여 준다
+  function undoHTML(st) {
+    const e = st.log[st.log.length - 1];
+    if (!S.flowActs.length || !e) return '';
+    const what = S.flowActs[S.flowActs.length - 1].auto ? '모두 폴드' : `${H.POS_LABEL[e.pos]} ${SEAT_ACT[e.type] || '폴드'}`;
+    return `<div class="flow-undo"><button class="ghost" type="button" id="flowUndo">↩ 되돌리기 · ${esc(what)}</button></div>`;
+  }
+  function renderFlowActs(st) {
+    const box = $('#flowActs');
+    if (st.status !== 'playing') {
+      box.innerHTML = `<p class="flow-end">${esc(flowMessage(st))}</p><button class="btn" type="button" id="flowNew">새 핸드</button>${undoHTML(st)}`;
+      return;
+    }
+    const o = H.flowOptions(st);
+    const btn = (cls, type, to, label) => `<button type="button" class="act-btn ${cls}" data-ftype="${type}" ${to != null ? `data-fto="${to}"` : ''}>${esc(label)}</button>`;
+    const custom = o.canRaise ? `<div class="row"><div class="num"><input id="flowAmt" type="number" inputmode="decimal" min="${o.min}" max="${o.max}" step="0.5" placeholder="${fmt1(o.min)}"><span>BB</span></div><button class="ghost" type="button" id="flowCustom">${o.raiseType === 'bet' ? '이 금액 벳' : '이 금액으로 레이즈'}</button></div>` : '';
+    const base = (o.canCheck ? btn('call', 'check', null, '체크') : btn('fold', 'fold', null, '폴드') + btn('call', 'call', null, `콜 ${fmt1(o.toCall)}BB`));
+    const allin = btn('allin', 'allin', null, `올인 ${fmt1(o.max)}BB`);
+    if (o.hero) {
+      const res = actsReady && last && last.res;
+      if (res && res.actions) {
+        const top = res.consensus.top;
+        const rows = res.actions.map((a, i) => (res.consensus.freq[i] >= 0.004 || i === top || a.kind === 'fold' || a.kind === 'call' || a.kind === 'check' ? `<button type="button" class="act-btn ${a.kind === 'bet' ? 'raise' : a.kind === 'check' ? 'call' : a.kind} ${i === top ? 'top' : ''}" data-res="${i}">${esc(a.label)}${a.sub ? ' ' + esc(a.sub) : ''}<b>${(res.consensus.freq[i] * 100).toFixed(0)}%</b></button>` : '')).join('');
+        box.innerHTML = `<p class="flow-head">내 차례 — 실제로 한 액션을 고르세요 (금색이 추천)</p><div class="flow-btns">${rows}</div>${custom}${undoHTML(st)}`;
+      } else {
+        box.innerHTML = `<p class="flow-head">내 차례 — ${esc(res && res.error ? res.error : '계산 중…')}</p><div class="flow-btns">${base}${allin}</div>${custom}${undoHTML(st)}`;
+      }
+      return;
+    }
+    const sizes = o.sizes.map((x) => btn('raise', o.raiseType, x.to, `${o.raiseType === 'bet' ? '벳' : '레이즈'} ${x.label}`)).join('');
+    box.innerHTML = `<p class="flow-head">${H.POS_LABEL[o.pos]} 차례 — 상대 액션을 고르세요</p>
+      <div class="flow-btns">${base}${sizes}${allin}</div>${custom}
+      ${o.canCheck && st.street !== 'preflop' ? '' : '<div class="row" style="margin-top:6px"><button class="linkish" type="button" id="flowFoldAll">내 차례까지 모두 폴드</button></div>'}${undoHTML(st)}`;
+  }
+  function flowDo(a) {
+    S.flowActs.push(a);
+    S.example = false;
+    const st = flowState();
+    if (st.street !== 'preflop') {
+      const empty = S.board.findIndex((c, i) => !c && i < BOARD_N[st.street]);
+      if (empty >= 0) { active = { group: 'board', idx: empty }; pendingRank = null; }
+    }
+    update();
+  }
+  // 진행 상태를 기존 입력값에 옮겨, 결과 패널과 Claude 토론이 같은 값을 보게 한다
+  function syncFlowToInputs() {
+    const st = flowState();
+    S.street = st.street;
+    if (st.status !== 'playing' || st.toAct !== st.heroPos) return;
+    const c = H.flowContext(st);
+    S.oppPos = c.oppPos;
+    if (st.street === 'preflop') Object.assign(S, { pfAction: c.pfAction, raiseSize: c.raiseSize || '', heroOpen: c.heroOpen || '', limpers: Math.max(1, c.limpers) });
+    else { Object.assign(S, { line: c.line, multiway: c.multiway }); S.curAct[st.street] = c.curAct; }
+  }
+
+  // ───────── 파생 값 ─────────
+  // 라인을 고르지 않았으면 프리플랍 액션에서 정하고, 그것도 없으면 먼저 액션하는 쪽이 오픈한 것으로 본다
+  const effLine = () => S.line || LINE_FROM_PF[S.pfAction] || (posList().indexOf(S.heroPos) < posList().indexOf(S.oppPos) ? 'hero_open_call' : 'opp_open_call');
+  function deadMoney() {
+    const inHand = [S.heroPos, S.oppPos];
+    return (inHand.includes('SB') ? 0 : 0.5) + (inHand.includes('BB') ? 0 : 1) + (S.game === 'mtt' ? 1 : 0);
+  }
+  function autoPot(street) {
+    if (street === 'flop') {
+      const line = effLine();
+      let size = null;
+      if (line === 'opp_open_call' && S.pfAction === 'open') size = S.raiseSize;
+      if (line === 'hero_open_call') size = S.heroOpen;
+      return H.estimateFlopPot(line, S.game, size, S.heroPos, S.oppPos, S.eff);
+    }
+    const prev = street === 'turn' ? 'flop' : 'turn';
+    const start = startPot(prev);
+    const r = S.results[prev] || 'xx';
+    const bet = parseFloat(S.amt[prev] && S.amt[prev].bet);
+    const grown = r === 'ob' && bet > 0 ? start + 2 * bet : start * RESULT_MULT[r];
+    return Math.min(grown, 2 * S.eff + deadMoney()); // 두 사람의 유효 스택을 넘어 커질 수 없다
+  }
+  function startPot(street) {
+    const m = S.potManual[street];
+    return m != null && m > 0 ? m : Math.round(autoPot(street) * 10) / 10;
+  }
+  function stackAt(street) {
+    return Math.max(0.5, Math.round((S.eff - (startPot(street) - deadMoney()) / 2) * 10) / 10);
+  }
+  const toCards = (arr) => arr.filter(Boolean).map(H.parseCard);
+
+  function buildCtx() {
+    if (isFlow()) {
+      const st = flowState();
+      if (st.status !== 'playing' || st.toAct !== st.heroPos) return null;
+      return Object.assign(H.flowContext(st), {
+        stage: S.stage, oppType: S.oppType,
+        hero: S.hero.filter(Boolean).length === 2 ? toCards(S.hero) : null,
+        board: toCards(S.board.slice(0, BOARD_N[st.street]).filter(Boolean)),
+      });
+    }
+    const base = {
+      game: S.game, stage: S.stage, table: S.table, eff: S.eff,
+      heroPos: S.heroPos, oppPos: S.oppPos, oppType: S.oppType,
+      hero: S.hero.filter(Boolean).length === 2 ? toCards(S.hero) : null,
+      street: S.street,
+      pfAction: S.pfAction, raiseSize: parseFloat(S.raiseSize) || 0, heroOpen: parseFloat(S.heroOpen) || 0, limpers: S.limpers,
+    };
+    if (S.street === 'preflop') return base;
+    const n = BOARD_N[S.street];
+    const board = S.board.slice(0, n);
+    const st = S.street;
+    const start = startPot(st);
+    let stack = stackAt(st);
+    const a = S.amt[st] || {};
+    const act = S.curAct[st];
+    let pot = start, call = 0;
+    if (act === 'bet') { const b = parseFloat(a.bet) || Math.round(start * 0.5 * 10) / 10; pot = start + b; call = b; }
+    else if (act === 'raise') {
+      const mb = parseFloat(a.myBet) || Math.round(start * 0.5 * 10) / 10;
+      const rt = parseFloat(a.raiseTo) || mb * 3;
+      pot = start + mb + rt; call = Math.max(0, rt - mb); stack = Math.max(0.5, stack - mb);
+    } else if (act === 'allin') { const al = parseFloat(a.allin) || stack; pot = start + al; call = al; }
+    const history = [];
+    for (const s of ['flop', 'turn']) {
+      if (STREETS.indexOf(s) >= STREETS.indexOf(st)) break;
+      for (const h of RESULT_HISTORY[S.results[s] || 'xx']) history.push(Object.assign({ street: s }, h));
+    }
+    return Object.assign(base, {
+      board: board.every(Boolean) ? toCards(board) : toCards(board.filter(Boolean)),
+      line: effLine(), multiway: S.multiway, history,
+      curAct: act === 'first' ? 'first' : act, pot, call, stack,
+    });
+  }
+
+  // ───────── 입력 패널 동기화 ─────────
+  function posList() { return H.POSITIONS[S.table]; }
+  function renderPositions() {
+    for (const field of ['heroPos', 'oppPos']) {
+      const box = $(`[data-field="${field}"]`);
+      box.innerHTML = posList().map((p) => `<button class="chip" type="button" data-v="${p}">${H.POS_LABEL[p]}</button>`).join('');
+    }
+  }
+  function renderResultChips() {
+    for (const s of ['flop', 'turn']) {
+      const box = $(`[data-result="${s}"]`);
+      box.innerHTML = RESULT_OPTS.map(([v, l]) => `<button class="chip" type="button" data-v="${v}" aria-pressed="${S.results[s] === v}">${l}</button>`).join('');
+    }
+  }
+
+  let active = null; // {group, idx}
+  let pendingRank = null;
+  function usedCards() { return new Set([...S.hero, ...S.board].filter(Boolean)); }
+  function cardHTML(c, attrs, extra) {
+    if (!c) return `<button type="button" class="card empty ${extra || ''}" ${attrs}>+</button>`;
+    const suit = H.SUITS.indexOf(c[1]);
+    return `<button type="button" class="card suit-${suit} ${extra || ''}" ${attrs} aria-label="${c}"><span>${c[0] === 'T' ? '10' : c[0]}<span class="s">${H.SUIT_SYM[suit]}</span></span></button>`;
+  }
+  function renderCards() {
+    const hb = $('[data-cards="hero"]');
+    hb.innerHTML = S.hero.map((c, i) => cardHTML(c, `data-group="hero" data-idx="${i}"`, active && active.group === 'hero' && active.idx === i ? 'active' : '')).join('');
+    const bb = $('[data-cards="board"]');
+    const n = Math.max(3, BOARD_N[S.street]);
+    let html = '';
+    for (let i = 0; i < n; i++) {
+      if (i === 3 || i === 4) html += '<span class="gap"></span>';
+      html += cardHTML(S.board[i], `data-group="board" data-idx="${i}"`, active && active.group === 'board' && active.idx === i ? 'active' : '');
+    }
+    bb.innerHTML = html;
+  }
+  function renderPicker() {
+    const pk = $('#picker');
+    if (!active) { pk.hidden = true; return; }
+    const host = $(`[data-cards="${active.group}"]`);
+    if (pk.previousElementSibling !== host) host.after(pk);
+    pk.hidden = false;
+    const used = usedCards();
+    const cur = active.group === 'hero' ? S.hero[active.idx] : S.board[active.idx];
+    const ranks = 'AKQJT98765432'.split('');
+    $('#pkRanks').innerHTML = ranks.map((r) => {
+      const all = H.SUITS.split('').every((s) => used.has(r + s) && r + s !== cur);
+      return `<button type="button" class="pk" data-rank="${r}" aria-pressed="${pendingRank === r}" ${all ? 'disabled' : ''}>${r === 'T' ? '10' : r}</button>`;
+    }).join('');
+    $('#pkSuits').innerHTML = H.SUITS.split('').map((s, i) => {
+      const dis = pendingRank && used.has(pendingRank + s) && pendingRank + s !== cur;
+      return `<button type="button" class="pk s${i}" data-suit="${s}" ${dis ? 'disabled' : ''} aria-label="${['스페이드', '하트', '다이아', '클럽'][i]}">${H.SUIT_SYM[i]}</button>`;
+    }).join('') + '<button type="button" class="pk clear" data-clear="1">지우기</button>';
+  }
+  function setCard(card) {
+    if (!active) return;
+    const arr = active.group === 'hero' ? S.hero : S.board;
+    arr[active.idx] = card;
+    S.example = false;
+    pendingRank = null;
+    // 다음 빈 칸으로
+    const limit = active.group === 'hero' ? 2 : Math.max(3, BOARD_N[S.street]);
+    let next = null;
+    if (card) for (let i = 0; i < limit; i++) if (!arr[i]) { next = i; break; }
+    if (next == null && card && active.group === 'hero' && S.street !== 'preflop' && S.board.slice(0, BOARD_N[S.street]).some((c) => !c)) {
+      active = { group: 'board', idx: S.board.findIndex((c, i) => !c && i < BOARD_N[S.street]) };
+    } else active = next == null ? null : { group: active.group, idx: next };
+    update();
+  }
+
+  function sync() {
+    $$('[data-field]').forEach((box) => {
+      const f = box.dataset.field;
+      const val = f === 'line' ? effLine() : f === 'curAct' ? S.curAct[S.street] : S[f];
+      $$('[data-v]', box).forEach((b) => {
+        const on = String(val) === b.dataset.v;
+        if (b.getAttribute('role') === 'tab') b.setAttribute('aria-selected', on); else b.setAttribute('aria-pressed', on);
+        if (f === 'oppPos') b.disabled = b.dataset.v === S.heroPos;
+      });
+    });
+    $$('[data-show="mtt"]').forEach((e) => { e.hidden = S.game !== 'mtt'; });
+    $('[data-pane="preflop"]').hidden = S.street !== 'preflop';
+    $('[data-pane="post"]').hidden = S.street === 'preflop';
+    $$('[data-show-pf]').forEach((e) => { e.hidden = !e.dataset.showPf.split(' ').includes(S.pfAction); });
+    $$('[data-show-street]').forEach((e) => { e.hidden = !e.dataset.showStreet.split(' ').includes(S.street); });
+    $$('[data-show-act]').forEach((e) => { e.hidden = S.street === 'preflop' || S.curAct[S.street] !== e.dataset.showAct; });
+    $('#exampleTag').hidden = !S.example;
+    const flow = isFlow();
+    $('#flowGroup').hidden = !flow;
+    $('#manualGroup').hidden = flow;
+    $('#oppPosRow').hidden = flow;
+    // 보드 칸은 하나라서 모드에 따라 옮겨 단다
+    const boardField = $('#boardField');
+    const boardHome = flow ? $('#flowBoardSlot') : $('[data-pane="post"]');
+    if (boardField.parentElement !== boardHome) boardHome.prepend(boardField);
+    if (flow) {
+      const st = flowState();
+      $('#flowBoardSlot').hidden = st.street === 'preflop';
+      renderFlowTable(st);
+      renderFlowActs(st);
+    }
+    setVal('#eff', S.eff);
+    setVal('#raiseSize', S.raiseSize);
+    setVal('#heroOpen', S.heroOpen);
+    setVal('#limpers', S.limpers);
+    if (S.street !== 'preflop') {
+      const st = S.street;
+      const auto = Math.round(autoPot(st) * 10) / 10;
+      const pi = $('#pot');
+      pi.placeholder = String(auto);
+      setVal('#pot', S.potManual[st] != null ? S.potManual[st] : auto);
+      $('#potAuto').hidden = S.potManual[st] == null;
+      const a = S.amt[st] || {};
+      setVal('#betAmt', a.bet || '');
+      $('#betAmt').placeholder = fmt1(startPot(st) * 0.5);
+      setVal('#myBet', a.myBet || '');
+      $('#myBet').placeholder = fmt1(startPot(st) * 0.5);
+      setVal('#raiseTo', a.raiseTo || '');
+      setVal('#allinAmt', a.allin || '');
+      const stack = stackAt(st);
+      $('#stackHint').textContent = `스트리트 시작 시 내 남은 스택 ≈ ${fmt1(stack)}BB · SPR ${fmt1(stack / Math.max(startPot(st), 0.5))}`;
+    }
+    renderResultChips();
+    renderCards();
+    renderPicker();
+  }
+  function setVal(sel, v) {
+    const e = $(sel);
+    if (document.activeElement === e) return;
+    e.value = v == null ? '' : v;
+  }
+
+  // ───────── 계산과 결과 ─────────
+  let timer = null;
+  let last = null;
+  function update() {
+    persist();
+    actsReady = false;
+    if (isFlow()) syncFlowToInputs();
+    sync();
+    clearTimeout(timer);
+    timer = setTimeout(compute, 60);
+  }
+  function compute() {
+    let res;
+    const ctx = buildCtx();
+    if (!ctx) { // 내 차례가 아니면 계산할 것이 없다
+      const st = flowState();
+      last = { res: { walk: true, message: flowMessage(st), preview: previewVerdict(st) }, ctx: {}, grid: null };
+      actsReady = true;
+      renderResults();
+      return;
+    }
+    try { res = H.analyze(ctx); } catch (e) { res = { error: '계산 중 오류: ' + e.message }; console.error(e); }
+    let grid = null;
+    if (!res.error && !res.walk && S.street === 'preflop') { try { grid = H.preflopGrid(ctx); } catch (e) { grid = null; } }
+    last = { res, ctx, grid };
+    actsReady = true;
+    renderResults();
+    if (isFlow()) renderFlowActs(flowState());
+  }
+
+  function actColor(a, pot) {
+    if (a.kind === 'fold') return 'var(--fold)';
+    if (a.kind === 'check' || a.kind === 'call') return 'var(--call)';
+    if (a.kind === 'allin') return 'var(--allin)';
+    if (!a.amount || !pot) return 'var(--bet3)';
+    const r = a.amount / pot;
+    return r < 0.4 ? 'var(--bet1)' : r < 0.7 ? 'var(--bet2)' : r < 1.1 ? 'var(--bet3)' : 'var(--bet4)';
+  }
+  const miniCards = (cards) => `<span class="mini">${cards.map((c) => { const s = H.SUITS.indexOf(c[1]); return `<span class="mc suit-${s}">${c[0] === 'T' ? '10' : c[0]}${H.SUIT_SYM[s]}</span>`; }).join('')}</span>`;
+  const WHO = { tight: ['T', '타이트 전문가'], balanced: ['B', '균형형 전문가'], judge: ['합', '합의'] };
+
+  function freqRows(actions, freq, pot, topIdx) {
+    return actions.map((a, i) => {
+      const f = freq[i] * 100;
+      return `<div class="fr ${i === topIdx ? 'top' : ''} ${f < 0.05 ? 'zero' : ''}">
+        <div class="bar" style="width:${Math.min(100, f)}%;background:${actColor(a, pot)}"></div>
+        <div class="name">${esc(a.label)}${a.sub ? `<small>${esc(a.sub)}</small>` : ''}</div>
+        <div class="val">${f.toFixed(1)}</div></div>`;
+    }).join('');
+  }
+  function miniRows(actions, freq, pot) {
+    const top = freq.reduce((b, x, i) => (x > freq[b] ? i : b), 0);
+    return actions.map((a, i) => `<div class="mr ${i === top ? 'top' : ''}"><div class="lab"><span>${esc(a.label)}${a.sub ? ' · ' + esc(a.sub) : ''}</span><div class="track"><i style="width:${(freq[i] * 100).toFixed(1)}%;background:${actColor(a, pot)}"></i></div></div><div class="pv">${(freq[i] * 100).toFixed(1)}</div></div>`).join('');
+  }
+  function mixBar(mix) {
+    const cols = ['var(--bet3)', 'var(--gold)', 'var(--fold)', 'var(--ink-3)'];
+    const names = ['강한 메이드', '중간·약한 페어', '드로우', '에어'];
+    return `<div class="mix">${mix.map((m, i) => `<i style="width:${(m * 100).toFixed(1)}%;background:${cols[i]}"></i>`).join('')}</div>
+      <div class="mix-legend">${mix.map((m, i) => `<span><b style="background:${cols[i]}"></b>${names[i]} ${pct0(m)}</span>`).join('')}</div>`;
+  }
+
+  let gridStyle = 'balanced';
+  function gridHTML(grid, heroKey) {
+    const g = grid[gridStyle];
+    const cells = H.GRID.flat().map((k) => {
+      const fr = g[k] || {};
+      const r = (fr.raise || 0) * 100, al = (fr.allin || 0) * 100, c = (fr.call || 0) * 100;
+      const bg = `linear-gradient(to right, var(--allin) 0 ${al}%, var(--bet3) ${al}% ${al + r}%, var(--call) ${al + r}% ${al + r + c}%, transparent ${al + r + c}% 100%)`;
+      const strong = al + r + c > 50;
+      return `<div class="${k === heroKey ? 'me' : ''}" style="background:${bg},var(--surface-2);${strong ? 'color:#fff' : ''}" title="${k}: 레이즈 ${r.toFixed(0)}% · 올인 ${al.toFixed(0)}% · 콜 ${c.toFixed(0)}%"><span>${k}</span></div>`;
+    }).join('');
+    // 올인 콜 스팟은 콜·폴드만 있고, 에퀴티는 핸드마다 샘플링한 근사값이다
+    const legend = grid.allin
+      ? '<span><b style="background:var(--call)"></b>콜</span><span><b style="background:var(--surface-2);border:1px solid var(--line)"></b>폴드</span><span>테두리 = 내 핸드</span><span>에퀴티는 핸드별 샘플링 근사</span>'
+      : '<span><b style="background:var(--bet3)"></b>레이즈</span><span><b style="background:var(--allin)"></b>올인</span><span><b style="background:var(--call)"></b>콜·림프</span><span><b style="background:var(--surface-2);border:1px solid var(--line)"></b>폴드</span><span>테두리 = 내 핸드</span>';
+    return `<div class="card-box"><div class="group-head" style="margin-bottom:8px"><h3 style="margin:0">${grid.allin ? '올인 콜 레인지' : '이 스팟의 레인지'}</h3>
+      <div class="seg" id="gridSeg"><button type="button" data-g="tight" aria-pressed="${gridStyle === 'tight'}">타이트</button><button type="button" data-g="balanced" aria-pressed="${gridStyle === 'balanced'}">균형형</button></div></div>
+      <div class="grid-wrap"><div class="rgrid">${cells}</div></div>
+      <div class="legend">${legend}</div></div>`;
+  }
+
+  // 플레이 여부 판정 카드
+  function verdictHTML(res, note) {
+    const v = H.playVerdict(res);
+    if (!v) return '';
+    const i = res.consensus.top;
+    return `<div class="card-box play-box ${v.level}"><div class="play-main">${esc(v.label)}<b>참여 빈도 ${pct0(v.play)}</b></div>
+      <p class="hint">${esc(H.POS_LABEL[S.heroPos])} · ${esc(res.info.heroDesc)} · 추천 ${esc(res.actions[i].label)}${note ? ' · ' + esc(note) : ''}. 차트 기반 근사이며 실제 솔버 값이 아닙니다.</p></div>`;
+  }
+  // 내 차례 전이라도, 카드가 있고 아직 액션이 없으면 "모두 폴드로 올 때" 기준으로 미리 판정한다
+  function previewVerdict(st) {
+    if (st.status !== 'playing' || st.street !== 'preflop' || S.hero.filter(Boolean).length !== 2 || st.heroPos === 'BB') return null;
+    if (st.log.some((e) => e.raised || e.type === 'call' || e.hero)) return null;
+    try {
+      return H.analyze({ street: 'preflop', table: st.table, game: S.game, stage: S.stage, eff: S.eff, heroPos: S.heroPos, oppPos: 'BB', oppType: S.oppType, hero: toCards(S.hero), pfAction: 'none' });
+    } catch (e) { return null; }
+  }
+
+  function renderResults() {
+    const box = $('#results');
+    const { res, ctx, grid } = last;
+    if (res.error || res.walk) {
+      const pre = res.preview ? verdictHTML(res.preview, '앞에서 모두 폴드로 올 때 기준') : '';
+      box.innerHTML = pre + `<div class="card-box empty-state">${esc(res.error || res.message)}</div>` + aiShell();
+      setDock('—', res.error ? '입력을 마저 채우세요' : '');
+      wireResults();
+      return;
+    }
+    const A = res.actions, Cn = res.consensus, info = res.info;
+    const pot = info.pot;
+    const boardCards = S.street === 'preflop' ? [] : S.board.slice(0, BOARD_N[S.street]).filter(Boolean);
+    const sorted = Cn.freq.map((f, i) => [f, i]).sort((a, b) => b[0] - a[0]);
+    const second = sorted[1] && sorted[1][0] >= 0.2 ? sorted[1] : null;
+    const verdict = `추천 <em>${esc(A[Cn.top].label)}${A[Cn.top].sub ? ' (' + esc(A[Cn.top].sub) + ')' : ''}</em>${second ? ` · 혼합 ${esc(A[second[1]].label)} ${(second[0] * 100).toFixed(0)}%` : ''}`;
+    const stats = [];
+    stats.push(['팟', fmt1(pot) + 'BB']);
+    if (info.call > 0) stats.push(['콜 금액', fmt1(info.call) + 'BB']);
+    if (info.required != null) stats.push(['팟오즈 필요', pct0(info.required)]);
+    const eqT = res.tight.equity, eqB = res.balanced.equity;
+    if (eqB != null) stats.push(['에퀴티 T / B', eqT != null && Math.round(eqT * 100) !== Math.round(eqB * 100) ? `${pct0(eqT)} / ${pct0(eqB)}` : pct0(eqB)]);
+    if (info.mdf != null) stats.push(['MDF', pct0(info.mdf)]);
+    if (info.spr != null && info.spr > 0) stats.push(['SPR', fmt1(info.spr)]);
+    if (info.villainPct != null) stats.push(['상대 레인지', pct0(info.villainPct)]);
+    const spotMeta = `${STREET_LABEL[S.street]} · ${H.POS_LABEL[S.heroPos]} vs ${H.POS_LABEL[S.oppPos]} · ${S.game === 'mtt' ? '토너먼트 ' + H.STAGE_LABEL[S.stage] : '캐시'} ${fmt1(S.eff)}BB`;
+
+    let html = S.street === 'preflop' ? verdictHTML(res) : '';
+    html += `<div class="solver">
+      <div class="solver-head"><div class="spot">${miniCards(S.hero)}${boardCards.length ? '<span class="meta">on</span>' + miniCards(boardCards) : ''}<span class="meta">${esc(spotMeta)}</span></div><span class="solver-title">두 전문가 합의 · %</span></div>
+      <div class="freq-table">${freqRows(A, Cn.freq, pot, Cn.top)}</div>
+      <div class="verdict">${verdict}</div>
+      <div class="solver-foot"><span>의견 일치 <b>${pct0(Cn.agreement)}</b></span><span>가중 <b>균형형 ${Math.round(Cn.w * 100)} : 타이트 ${Math.round((1 - Cn.w) * 100)}</b></span></div>
+    </div>`;
+    html += `<div class="card-box"><div class="stats">${stats.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
+      <p class="handline">내 핸드: <b>${esc(info.heroDesc || '')}</b>${info.texture ? ` · 보드 ${esc(info.texture.label)} (${esc(info.texture.tags.join('·'))})` : ''}${info.ip != null ? ` · ${info.ip ? '인 포지션' : '아웃 오브 포지션'}` : ''}</p></div>`;
+    html += `<div class="card-box"><h3>두 전문가의 토론</h3><div class="debate">${Cn.dialogue.map((d) => `<div class="msg ${d.who}"><div class="avatar ${d.who}">${WHO[d.who][0]}</div><div class="bubble"><div class="who">${WHO[d.who][1]}</div>${esc(d.text)}</div></div>`).join('')}</div></div>`;
+    const expertCard = (key, e, label, tag) => `<div class="card-box expert ${key}"><div class="expert-head"><h3>${label}</h3><span class="tag">${tag}</span></div>
+      <div class="mini-table">${miniRows(A, e.freq, pot)}</div>
+      <p class="headline">${esc(e.headline || '')}</p>
+      <ul class="facts">${(e.facts || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+      ${S.street !== 'preflop' && e.mix ? mixBar(e.mix) : ''}</div>`;
+    html += `<div class="experts">${expertCard('tight', res.tight, '타이트 전문가', 'TAG · 밸류 중심 착취')}${expertCard('balanced', res.balanced, '균형형 전문가', '솔버 기준선 · 스몰볼')}</div>`;
+    if (grid) html += gridHTML(grid, info.heroKey);
+    html += aiShell();
+    box.innerHTML = html;
+    setDock(A[Cn.top].label + (A[Cn.top].sub ? ' ' + A[Cn.top].sub : ''), `합의 ${(Cn.freq[Cn.top] * 100).toFixed(1)}% · 일치 ${pct0(Cn.agreement)}`);
+    wireResults();
+  }
+  function setDock(act, sub) { $('#dockAct').textContent = act; $('#dockSub').textContent = sub || '합의 액션'; }
+  function wireResults() {
+    const seg = $('#gridSeg');
+    if (seg) seg.addEventListener('click', (e) => { const b = e.target.closest('[data-g]'); if (!b) return; gridStyle = b.dataset.g; renderResults(); });
+    wireAI();
+  }
+
+  // ───────── Claude 심층 토론 (sample 기능이 있을 때만) ─────────
+  let sample = null;
+  let aiState = { status: 'idle', data: null, error: null, key: null };
+  let aiCtl = null;
+  const aiKey = () => JSON.stringify(buildCtx());
+  function aiShell() {
+    if (!sample) return '';
+    const stale = aiState.data && aiState.key !== aiKey();
+    return `<div class="card-box ai" id="aiBox"><h3>Claude 심층 토론</h3>
+      <p class="hint">두 전문가 페르소나가 이 상황을 각자 분석하고 서로 반박한 뒤 합의합니다. 내 Claude 사용량을 씁니다.</p>
+      <div class="ai-actions"><button class="btn" type="button" id="aiRun" ${aiState.status === 'running' ? 'disabled' : ''}>${aiState.data ? '다시 토론' : '심층 토론 시작'}</button>
+      ${aiState.status === 'running' ? '<button class="ghost" type="button" id="aiStop">중지</button>' : ''}
+      <span class="ai-status" id="aiStatus">${aiState.status === 'running' ? esc(aiState.msg || '생각 중…') : stale ? '입력이 바뀌었습니다. 다시 토론하면 새 상황으로 분석합니다.' : ''}</span></div>
+      <div class="ai-out" id="aiOut"></div></div>`;
+  }
+  function wireAI() {
+    const run = $('#aiRun');
+    if (!run) return;
+    run.addEventListener('click', runAI);
+    const stop = $('#aiStop');
+    if (stop) stop.addEventListener('click', () => aiCtl && aiCtl.abort());
+    renderAIOut();
+  }
+  function renderAIOut() {
+    const out = $('#aiOut');
+    if (!out) return;
+    out.textContent = '';
+    if (aiState.error) { const p = document.createElement('p'); p.className = 'err'; p.textContent = aiState.error; out.append(p); }
+    const d = aiState.data;
+    if (!d) return;
+    const A = d.labels.map((l, i) => Object.assign({ label: l }, d.acts[i] || {}));
+    const freq = d.labels.map((l) => (Number(d.final[l]) || 0) / 100);
+    const sum = freq.reduce((a, b) => a + b, 0) || 1;
+    const nf = freq.map((x) => x / sum);
+    const top = nf.reduce((b, x, i) => (x > nf[b] ? i : b), 0);
+    const panel = document.createElement('div');
+    panel.className = 'solver';
+    panel.innerHTML = `<div class="solver-head"><span class="solver-title">Claude 토론 합의 · %</span></div><div class="freq-table">${freqRows(A, nf, d.pot, top)}</div>`;
+    const v = document.createElement('div'); v.className = 'verdict'; v.textContent = d.summary || ''; panel.append(v);
+    out.append(panel);
+    const deb = document.createElement('div'); deb.className = 'debate';
+    for (const m of d.dialogue || []) {
+      const who = WHO[m.who] ? m.who : 'judge';
+      const row = document.createElement('div'); row.className = 'msg ' + who;
+      const av = document.createElement('div'); av.className = 'avatar ' + who; av.textContent = WHO[who][0];
+      const bub = document.createElement('div'); bub.className = 'bubble';
+      const w = document.createElement('div'); w.className = 'who'; w.textContent = WHO[who][1];
+      bub.append(w, document.createTextNode(String(m.text || '')));
+      row.append(av, bub); deb.append(row);
+    }
+    out.append(deb);
+  }
+
+  const PERSONA = {
+    tight: '너는 GTO를 완전히 이해하고 솔버로 수천 시간 공부한, 20년 경력의 타이트-어그레시브(TAG) 홀덤 프로다. 솔버 기준선을 정확히 알지만, 실전 풀이 블러프를 덜 하고 콜을 많이 한다는 근거로 의도적으로 타이트하게 이탈한다. 밸류 중심, 저분산, 원페어로 큰 팟을 만들지 않고, 토너먼트에선 ICM 생존 가치를 중시한다. 혼합은 최소화해 한두 액션에 빈도를 몰아준다.',
+    balanced: '너는 GTO를 100% 이해하고 솔버로 깊게 학습한 균형형(스몰볼·핸드리딩) 홀덤 프로다. 솔버 빈도를 기준선으로 혼합 전략을 쓰고, 레인지 어드밴티지·넛 어드밴티지·MDF·블로커·사이징 이론으로 판단하며, 상대의 명확한 경향이 있을 때만 착취한다.',
+  };
+  function situationText() {
+    const { res, ctx } = last;
+    const L = [];
+    L.push(`게임: ${S.game === 'mtt' ? `토너먼트(${H.STAGE_LABEL[S.stage]})` : '캐시'} ${S.table}-max, 유효 스택 ${fmt1(S.eff)}BB`);
+    L.push(`내 포지션 ${H.POS_LABEL[S.heroPos]}, 내 카드 ${S.hero.join(' ')}`);
+    L.push(`상대 포지션 ${H.POS_LABEL[S.oppPos]}, 성향 ${H.OPP_TYPES[S.oppType].label}, 팟에 남은 상대 ${S.multiway}명`);
+    const pfMap = { none: '내가 첫 액션(앞에서 모두 폴드)', limp: `림프 ${S.limpers}명`, open: `상대 오픈 ${S.raiseSize || '기본'}BB`, '3bet': `내 오픈에 상대 3벳 ${S.raiseSize || '기본'}BB`, '4bet': `내 3벳에 상대 4벳 ${S.raiseSize || '기본'}BB`, allin: '상대 올인' };
+    if (S.street === 'preflop') L.push(`프리플랍: ${pfMap[S.pfAction]}`);
+    else {
+      const lineMap = { hero_open_call: '내 오픈 → 상대 콜', opp_open_call: '상대 오픈 → 내 콜', hero_3bet_call: '내 3벳 → 상대 콜', opp_3bet_call: '상대 3벳 → 내 콜', limp: '림프 팟', hero_4bet_call: '내 4벳 → 상대 콜', opp_4bet_call: '상대 4벳 → 내 콜' };
+      L.push(`프리플랍 라인: ${lineMap[effLine()]}`);
+      L.push(`보드: ${S.board.slice(0, BOARD_N[S.street]).join(' ')} (${STREET_LABEL[S.street]})`);
+      for (const h of ctx.history || []) L.push(`${STREET_LABEL[h.street]} 상대 액션: ${{ check: '체크', call: '콜', bet: '벳', raise: '레이즈', allin: '올인' }[h.act]}`);
+      // 초과분을 돌려받은 뒤의 금액은 엔진 결과에 있다
+      const call = res.info ? res.info.call : ctx.call, pot = res.info ? res.info.pot : ctx.pot;
+      const actMap = { first: '내가 먼저 액션', check: '상대 체크', bet: `상대 벳 ${fmt1(call)}BB`, raise: `내 벳에 상대 레이즈 (콜 ${fmt1(call)}BB)`, allin: `상대 올인 (콜 ${fmt1(call)}BB)` };
+      L.push(`지금: ${actMap[S.curAct[S.street]]}, 팟 ${fmt1(pot)}BB(상대 벳 포함), 내 남은 스택 ${fmt1(ctx.stack)}BB`);
+    }
+    if (isFlow()) L.push('진행: ' + flowState().log.filter((e) => e.type !== 'fold').map((e) => `${STREET_LABEL[e.street]} ${H.POS_LABEL[e.pos]}${e.hero ? '(나)' : ''} ${SEAT_ACT[e.type]}${e.to > 0 && e.type !== 'check' ? ' ' + fmt1(e.to) + 'BB' : ''}`).join(', '));
+    if (res && res.actions) {
+      L.push(`엔진 계산: 내 핸드 ${res.info.heroDesc}; 추정 에퀴티 타이트 ${pct0(res.tight.equity)} / 균형형 ${pct0(res.balanced.equity)}${res.info.required != null ? `; 필요 에퀴티 ${pct0(res.info.required)}` : ''}${res.info.spr != null ? `; SPR ${fmt1(res.info.spr)}` : ''}`);
+      if (res.tight.mix && S.street !== 'preflop') L.push(`엔진 추정 상대 레인지(균형형): 강 ${pct0(res.balanced.mix[0])}, 중약 ${pct0(res.balanced.mix[1])}, 드로우 ${pct0(res.balanced.mix[2])}, 에어 ${pct0(res.balanced.mix[3])}`);
+      L.push('엔진 빈도(타이트): ' + res.actions.map((a, i) => `${a.label} ${(res.tight.freq[i] * 100).toFixed(1)}`).join(', '));
+      L.push('엔진 빈도(균형형): ' + res.actions.map((a, i) => `${a.label} ${(res.balanced.freq[i] * 100).toFixed(1)}`).join(', '));
+    }
+    return L.join('\n');
+  }
+  async function runAI() {
+    if (!sample || !last || !last.res.actions) return;
+    const labels = last.res.actions.map((a) => a.label + (a.sub ? ` (${a.sub})` : ''));
+    const sit = situationText();
+    const keyNow = aiKey();
+    aiCtl = new AbortController();
+    const signal = aiCtl.signal;
+    aiState = { status: 'running', data: null, error: null, key: keyNow, msg: '두 전문가가 각자 분석 중… (최대 1분)' };
+    renderResults();
+    const fmtSpec = `액션 라벨은 정확히 다음 중에서 그대로 쓴다: ${JSON.stringify(labels)}.\n`;
+    const r1 = (who) => `${PERSONA[who]}\n\n[상황]\n${sit}\n\n위 상황에서 내(히어로)가 할 액션을 솔버식 빈도로 정하라. 엔진 빈도는 참고만 하고 네 판단으로 고쳐도 된다.\n${fmtSpec}JSON 하나로만 답한다: {"freq": {"<라벨>": 숫자(합계 100)}, "best": "<라벨>", "reasons": ["한국어 한 문장", "한국어 한 문장", "한국어 한 문장"]}`;
+    try {
+      const [t, b] = await Promise.all([
+        sample.json(r1('tight'), { signal }),
+        sample.json(r1('balanced'), { signal }),
+      ]);
+      aiState.msg = '서로의 의견을 검토하고 합의하는 중…';
+      const st = $('#aiStatus'); if (st) st.textContent = aiState.msg;
+      const r2 = `너는 홀덤 토론 진행자다. 두 전문가가 같은 상황을 분석했다. 서로의 답을 본 뒤 토론하게 하고, 마지막에 합의 빈도를 정하라.\n\n[상황]\n${sit}\n\n[타이트 전문가 답]\n${JSON.stringify(t)}\n\n[균형형 전문가 답]\n${JSON.stringify(b)}\n\n규칙: 타이트(tight)와 균형형(balanced)이 번갈아 각 2번씩, 상대 주장에 동의하거나 반박하는 한국어 1~2문장을 말한다(구체적 숫자 사용). 그 다음 심판(judge)이 결론을 말한다. 합의 빈도는 두 답의 가중 평균을 기본으로 하되 더 설득력 있는 근거 쪽으로 조정한다. 상대 정보가 없거나 레귤러면 균형형 비중 60%, 니트 50%, 콜링스테이션 35%, LAG·매니악 60%, 토너먼트 버블·파이널의 올인 결정이면 균형형 최대 40%.\n${fmtSpec}JSON 하나로만 답한다: {"dialogue": [{"who": "tight|balanced|judge", "text": "..."}], "final": {"<라벨>": 숫자(합계 100)}, "best": "<라벨>", "summary": "최종 추천 한두 문장"}`;
+      const j = await sample.json(r2, { signal });
+      const final = j && j.final && typeof j.final === 'object' ? j.final : {};
+      aiState = {
+        status: 'done', error: null, key: keyNow,
+        data: { labels, acts: last.res.actions, final, dialogue: Array.isArray(j.dialogue) ? j.dialogue : [], summary: String(j.summary || ''), pot: last.res.info.pot },
+      };
+    } catch (e) {
+      const code = e && e.code;
+      if (code === 'cancelled') aiState = { status: 'idle', data: null, error: null, key: keyNow };
+      else if (code === 'not_granted' || code === 'sampling_disabled' || code === 'not_declared' || code === 'capability_disabled' || code === 'capability_removed') { sample = null; aiState = { status: 'idle' }; }
+      else {
+        const msg = { rate_limited: '요청이 너무 많습니다. 잠시 뒤 다시 눌러 주세요.', session_expired: '로그인이 만료되었습니다. 다시 로그인한 뒤 시도하세요.', invalid_json: '답을 해석하지 못했습니다. 다시 토론을 눌러 주세요.', refused: '이 요청에는 답할 수 없습니다.' }[code] || '연결 문제로 토론이 중단되었습니다. 다시 시도해 주세요.';
+        aiState = { status: 'idle', data: null, error: msg, key: keyNow };
+      }
+    }
+    renderResults();
+  }
+  if (window.claude && typeof window.claude.use === 'function') {
+    window.claude.use('sample').then((s) => { if (s) { sample = s; if (last) renderResults(); } }).catch(() => {});
+  }
+
+  // ───────── 이벤트 ─────────
+  function onFieldClick(e) {
+    const b = e.target.closest('[data-v]');
+    const box = e.target.closest('[data-field]');
+    if (!b || !box || b.disabled) return;
+    const f = box.dataset.field;
+    let v = b.dataset.v;
+    if (f === 'table' || f === 'multiway') v = Number(v);
+    S.example = false;
+    if (f === 'curAct') S.curAct[S.street] = v;
+    else if (f === 'line') S.line = v;
+    else S[f] = v;
+    if (f === 'table') {
+      renderPositions();
+      if (!posList().includes(S.heroPos)) S.heroPos = 'BTN';
+      if (!posList().includes(S.oppPos)) S.oppPos = 'BB';
+    }
+    if (f === 'heroPos' && S.oppPos === S.heroPos) S.oppPos = posList().find((p) => p !== S.heroPos && (p === 'BB' || p === 'BTN')) || posList().find((p) => p !== S.heroPos);
+    if (f === 'pfAction' || f === 'heroPos' || f === 'oppPos' || f === 'table') S.line = null;
+    if (f === 'heroPos' || f === 'table' || f === 'game') S.flowActs = []; // 자리·인원이 바뀌면 진행을 처음부터
+    if (f === 'street' && v !== 'preflop') {
+      const need = BOARD_N[v];
+      const empty = S.board.findIndex((c, i) => !c && i < need);
+      if (empty >= 0) { active = { group: 'board', idx: empty }; pendingRank = null; }
+    }
+    if (f === 'street' && v === 'preflop' && active && active.group === 'board') active = null;
+    update();
+  }
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.inputs [data-field]')) return onFieldClick(e);
+    const fa = e.target.closest('[data-ftype]');
+    if (fa) { flowDo({ type: fa.dataset.ftype, to: parseFloat(fa.dataset.fto) || undefined }); return; }
+    const fr = e.target.closest('[data-res]');
+    if (fr && last && last.res.actions) {
+      const a = last.res.actions[Number(fr.dataset.res)], st = flowState(), o = H.flowOptions(st);
+      if (a.kind === 'fold') flowDo({ type: 'fold' });
+      else if (a.kind === 'check' || a.kind === 'call') flowDo({ type: o.canCheck ? 'check' : 'call' });
+      else if (a.kind === 'allin') flowDo({ type: 'allin' });
+      // 포스트플랍 레이즈 금액은 이번에 더 넣는 칩이고, 프리플랍은 총액이다
+      else flowDo({ type: o.raiseType, to: (st.street === 'preflop' ? 0 : st.players[st.heroPos].bet) + (a.amount || o.min) });
+      return;
+    }
+    if (e.target.closest('#flowCustom')) {
+      const v = parseFloat($('#flowAmt').value);
+      if (v > 0) flowDo({ type: H.flowOptions(flowState()).raiseType, to: v });
+      return;
+    }
+    if (e.target.closest('#flowUndo')) {
+      // "모두 폴드"로 들어간 폴드는 한 번에 되돌린다
+      let a;
+      do { a = S.flowActs.pop(); } while (a && a.auto && S.flowActs.length && S.flowActs[S.flowActs.length - 1].auto);
+      if (active && active.group === 'board') { active = null; pendingRank = null; }
+      update();
+      return;
+    }
+    if (e.target.closest('#flowFoldAll')) {
+      const st = flowState();
+      while (st.status === 'playing' && st.toAct !== st.heroPos) { H.applyAction(st, { type: 'fold' }); S.flowActs.push({ type: 'fold', auto: true }); }
+      S.example = false;
+      update();
+      return;
+    }
+    const res = e.target.closest('[data-result]');
+    if (res) {
+      const b = e.target.closest('[data-v]');
+      if (b) { S.results[res.dataset.result] = b.dataset.v; S.example = false; update(); }
+      return;
+    }
+    const q = e.target.closest('[data-quick]');
+    if (q) {
+      const b = e.target.closest('[data-v]');
+      if (!b) return;
+      if (q.dataset.quick === 'eff') { S.eff = Number(b.dataset.v); S.flowActs = []; }
+      if (q.dataset.quick === 'bet') { const st = S.street; S.amt[st] = Object.assign({}, S.amt[st], { bet: fmt1(startPot(st) * Number(b.dataset.v)) }); }
+      S.example = false;
+      update();
+      return;
+    }
+    const slot = e.target.closest('.card[data-group]');
+    if (slot) {
+      const g = slot.dataset.group, i = Number(slot.dataset.idx);
+      active = active && active.group === g && active.idx === i ? null : { group: g, idx: i };
+      pendingRank = null;
+      sync();
+      return;
+    }
+    const rk = e.target.closest('[data-rank]');
+    if (rk) { pendingRank = rk.dataset.rank; renderPicker(); return; }
+    const su = e.target.closest('[data-suit]');
+    if (su) {
+      if (!pendingRank) return;
+      setCard(pendingRank + su.dataset.suit);
+      return;
+    }
+    if (e.target.closest('[data-clear]')) { setCard(null); return; }
+    if (e.target.closest('#pkClose')) { active = null; pendingRank = null; sync(); return; }
+    if (e.target.closest('#potAuto')) { S.potManual[S.street] = null; update(); return; }
+    if (e.target.closest('#newHand, #flowNew')) {
+      const keep = { game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, heroPos: S.heroPos, oppPos: S.oppPos, mode: S.mode };
+      S = Object.assign(clone(EXAMPLE), keep, { hero: [null, null], board: [null, null, null, null, null], street: 'preflop', example: false, curAct: { flop: 'first', turn: 'first', river: 'first' }, results: { flop: 'xx', turn: 'xx' } });
+      active = { group: 'hero', idx: 0 }; pendingRank = null;
+      aiState = { status: 'idle' };
+      update();
+      return;
+    }
+    if (e.target.closest('#dockGo')) { $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  });
+
+  const numBind = {
+    eff: (v) => { if (v > 0) { S.eff = v; S.flowActs = []; } },
+    raiseSize: (v, raw) => { S.raiseSize = raw; },
+    heroOpen: (v, raw) => { S.heroOpen = raw; },
+    limpers: (v) => { if (v >= 1) S.limpers = Math.round(v); },
+    pot: (v) => { S.potManual[S.street] = v > 0 ? v : null; },
+    betAmt: (v, raw) => { S.amt[S.street] = Object.assign({}, S.amt[S.street], { bet: raw }); },
+    myBet: (v, raw) => { S.amt[S.street] = Object.assign({}, S.amt[S.street], { myBet: raw }); },
+    raiseTo: (v, raw) => { S.amt[S.street] = Object.assign({}, S.amt[S.street], { raiseTo: raw }); },
+    allinAmt: (v, raw) => { S.amt[S.street] = Object.assign({}, S.amt[S.street], { allin: raw }); },
+  };
+  document.addEventListener('input', (e) => {
+    const id = e.target.id;
+    if (!numBind[id]) return;
+    numBind[id](parseFloat(e.target.value), e.target.value);
+    S.example = false;
+    update();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!active) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toUpperCase();
+    if ('AKQJT98765432'.includes(k) && k.length === 1) { pendingRank = k; renderPicker(); e.preventDefault(); return; }
+    if (k === '1' || k === '0') { pendingRank = 'T'; renderPicker(); e.preventDefault(); return; }
+    if ('SHDC'.includes(k) && k.length === 1 && pendingRank) {
+      const card = pendingRank + k.toLowerCase();
+      if (!usedCards().has(card)) setCard(card);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') { setCard(null); e.preventDefault(); return; }
+    if (e.key === 'Escape') { active = null; pendingRank = null; sync(); }
+  });
+
+  // 독립 배포판(GitHub Pages)에서만 오프라인용 서비스워커를 등록한다
+  if (document.querySelector('meta[name="app-standalone"]') && 'serviceWorker' in navigator) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+  }
+
+  renderPositions();
+  update();
+})();
