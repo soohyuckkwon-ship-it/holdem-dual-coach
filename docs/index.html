@@ -187,6 +187,21 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .prac-grade.bad { background: color-mix(in srgb, var(--allin) 16%, transparent); color: var(--allin); }
 .prac-grade small { display: block; font-weight: 500; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
 .fr.mine { outline: 2px dashed var(--felt-ink); outline-offset: -4px; }
+.prac-fb { display: grid; gap: 10px; margin-bottom: 14px; }
+.prac-fb .prac-grade { margin-bottom: 0; }
+.prac-fb .facts { margin: 0; }
+.prac-log li.has-hero b { color: var(--gold); }
+.prac-result { font-size: 16px; font-weight: 600; margin: 4px 0 10px; }
+.prac-sd { display: grid; gap: 6px; margin-bottom: 12px; }
+.prac-sd > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); }
+.prac-sd > div.win { outline: 2px solid var(--gold); }
+.prac-sd .mini .mc { background: #fff; }
+.prac-decs { padding-left: 18px; line-height: 1.8; }
+.prac-decs small { color: var(--ink-2); }
+.badge { display: inline-block; border-radius: 6px; padding: 0 7px; font-size: 12px; font-weight: 700; }
+.badge.good { background: color-mix(in srgb, var(--call) 18%, transparent); color: var(--call); }
+.badge.mixed { background: color-mix(in srgb, var(--gold) 22%, transparent); color: var(--gold); }
+.badge.bad { background: color-mix(in srgb, var(--allin) 16%, transparent); color: var(--allin); }
 .act-btn b { font-family: var(--font-mono); font-weight: 600; margin-left: 6px; color: var(--ink-2); }
 .act-btn.top { border: 2px solid var(--gold); }
 .act-btn.fold { color: var(--fold); } .act-btn.call { color: var(--call); } .act-btn.raise { color: var(--bet3); } .act-btn.allin { color: var(--allin); }
@@ -370,14 +385,12 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
       </div>
 
       <div class="group" id="practiceGroup" hidden>
-        <div class="group-head"><h2>연습 모드</h2><button class="ghost" id="pracNext" type="button">새 문제</button></div>
-        <p class="hint">무작위 카드와 상대 액션으로 상황을 만들고 내 차례에서 멈춥니다. 액션을 고르면 두 전문가 합의 빈도로 채점합니다(근사 모델 기준).</p>
-        <div class="row"><span class="lbl">스트리트</span>
-          <div class="chips small" id="pracStreets">
-            <button class="chip" type="button" data-ps="preflop">프리플랍</button>
-            <button class="chip" type="button" data-ps="flop">플랍</button>
-            <button class="chip" type="button" data-ps="turn">턴</button>
-            <button class="chip" type="button" data-ps="river">리버</button>
+        <div class="group-head"><h2>연습 모드</h2><button class="ghost" id="pracNext" type="button">새 핸드</button></div>
+        <p class="hint">무작위 카드로 한 핸드를 프리플랍부터 쇼다운까지 진행합니다. 상대는 무작위로 액션하고, 내 차례마다 고른 액션을 두 전문가 합의 빈도로 채점한 뒤 그 액션으로 핸드를 이어 갑니다(근사 모델 기준).</p>
+        <div class="row"><span class="lbl">내 카드</span>
+          <div class="chips small" id="pracPlayable">
+            <button class="chip" type="button" data-pplay="true">플레이할 핸드 위주</button>
+            <button class="chip" type="button" data-pplay="false">완전 무작위</button>
           </div>
         </div>
         <div class="row"><span class="lbl">내 자리</span><div class="chips small" id="pracPos"></div></div>

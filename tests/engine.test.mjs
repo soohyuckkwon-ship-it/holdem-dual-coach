@@ -546,3 +546,25 @@ test('연습 모드: 고른 스트리트의 내 차례에서 멈춘 문제를 �
   const p = E.practiceHand({ table: 9, eff: 40, game: 'mtt', heroPos: 'BB', streets: ['flop'] }, 77);
   assert.ok(p && p.cfg.heroPos === 'BB' && p.street === 'flop');
 });
+
+test('한 핸드 전체 연습: 내 차례마다 멈추고, 고른 액션으로 끝까지 진행해 결과를 낸다', () => {
+  const kinds = new Set();
+  for (let h = 1; h <= 25; h++) {
+    const p = E.practiceNew({ table: 6, eff: 100, game: 'cash' }, h * 131);
+    let guard = 0;
+    while (!p.end && guard++ < 30) {
+      assert.equal(p.s.toAct, p.s.heroPos);
+      // 번갈아 추천 액션과 가장 공격적인 액션을 골라 여러 결말이 나오게 한다
+      const i = guard % 2 ? p.res.consensus.top : p.res.actions.length - 1;
+      const g = E.practicePlay(p, i);
+      assert.ok(['good', 'mixed', 'bad'].includes(g.level));
+    }
+    assert.ok(p.end, '핸드가 끝나야 한다');
+    kinds.add(p.end.kind);
+    if (p.end.kind === 'showdown') {
+      assert.ok(p.end.winners.length >= 1);
+      assert.ok(p.end.hands.some((x) => x.pos === p.s.heroPos));
+    }
+  }
+  assert.ok(kinds.has('showdown') && (kinds.has('fold') || kinds.has('won')));
+});
