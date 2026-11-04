@@ -1368,6 +1368,7 @@
    * }
    */
   function analyze(input) {
+    if (input && input.variant === 'omaha') return analyzeOmaha(input);
     const ctx = Object.assign({ table: 6, game: 'cash', stage: 'middle', eff: 100, oppType: 'unknown', multiway: 1 }, input);
     ctx.table = normTable(ctx.table);
     ctx.eff = Math.max(1, Number(ctx.eff) || 100);
@@ -1508,6 +1509,7 @@
   // 프리플랍 스팟의 13×13 레인지 (두 전문가). 올인 콜 스팟은 핸드별 에퀴티를 샘플링한다
   const GRID_EQ_SAMPLES = 2500;
   function preflopGrid(input) {
+    if (input && input.variant === 'omaha') return null; // 오마하는 13×13 표가 없다
     const ctx = Object.assign({ table: 6, game: 'cash', stage: 'middle', eff: 100, oppType: 'unknown' }, input);
     ctx.table = normTable(ctx.table);
     ctx.eff = Math.max(1, Number(ctx.eff) || 100);
@@ -1543,6 +1545,7 @@
     post('SB', 0.5); post('BB', 1);
     return {
       table, eff, game: cfg.game === 'mtt' ? 'mtt' : 'cash', heroPos: order.includes(cfg.heroPos) ? cfg.heroPos : 'BTN',
+      plo: cfg.variant === 'omaha', // 오마하는 팟 리밋
       order, players, street: 'preflop', pot: 1.5 + (cfg.game === 'mtt' ? 1 : 0), cur: 1, minRaise: 1,
       log: [], status: 'playing', toAct: order[0],
     };
@@ -1581,14 +1584,15 @@
     let type = a.type;
     if (type === 'fold' && toCall === 0) type = 'check';
     if (type === 'check' && toCall > 0) type = 'call';
+    const potCap = s.plo ? s.cur + s.pot + toCall : Infinity; // 팟 리밋 최대 총액
     if (type === 'allin') {
-      const total = p.bet + p.stack;
+      const total = Math.min(p.bet + p.stack, potCap);
       type = total > s.cur ? (s.cur === 0 ? 'bet' : 'raise') : 'call';
       a = { to: total };
     }
     if (type === 'bet' || type === 'raise') {
       const potBefore = s.pot;
-      const to = Math.min(p.bet + p.stack, Math.max(Number(a.to) || 0, s.cur + s.minRaise));
+      const to = Math.min(p.bet + p.stack, potCap, Math.max(Number(a.to) || 0, s.cur + s.minRaise));
       if (to <= s.cur) type = 'call';
       else {
         const by = to - s.cur;
@@ -1623,7 +1627,8 @@
     if (s.status !== 'playing') return null;
     const p = s.players[s.toAct];
     const toCall = Math.max(0, s.cur - p.bet);
-    const max = round1(p.bet + p.stack);
+    // 팟 리밋(오마하): 최대 레이즈 총액 = 지금 베팅 + 콜한 뒤의 팟
+    const max = round1(s.plo ? Math.min(p.bet + p.stack, s.cur + s.pot + toCall) : p.bet + p.stack);
     const min = round1(s.cur + s.minRaise);
     const othersCanRespond = s.order.some((pos) => pos !== s.toAct && canAct(s.players[pos]));
     const canRaise = max > s.cur && othersCanRespond;
@@ -1637,6 +1642,7 @@
       else if (s.cur === 0) sizes = [33, 50, 75, 100, 150].map((x) => ({ to: round1(s.pot * x / 100), label: `${x}%` }));
       else sizes = [2.5, 3].map((x) => ({ to: round1(s.cur * x), label: `${x}배 ${bb(s.cur * x)}` })).concat([{ to: round1(s.cur + s.pot + toCall), label: `팟 ${bb(s.cur + s.pot + toCall)}` }]);
       sizes = sizes.filter((x) => x.to >= min && x.to < max);
+      if (s.plo) sizes = s.cur === 0 && s.street !== 'preflop' ? [33, 50, 75].map((x) => ({ to: round1(s.pot * x / 100), label: `${x}%` })).filter((x) => x.to >= min && x.to < max).concat([{ to: max, label: `팟 ${bb(max)}` }]) : [{ to: max, label: `팟 ${bb(max)}` }];
     }
     return { pos: s.toAct, hero: s.toAct === s.heroPos, toCall: Math.min(toCall, p.stack), canCheck: toCall === 0, canRaise, raiseType: s.cur === 0 ? 'bet' : 'raise', min: Math.min(min, max), max, sizes };
   }
@@ -1693,6 +1699,377 @@
     return { play, level, label: { play: '플레이', mixed: '경계 — 빈도로 섞음', fold: '폴드' }[level] };
   }
 
+  // ───────────────────────── 오마하 (PLO, 팟 리밋) ─────────────────────────
+  // 규칙: 카드 4장을 받고, 쇼다운에서는 반드시 내 카드 2장 + 보드 3장으로 5장을 만든다. 베팅은 팟 리밋.
+  // 홀덤 엔진과 같은 결과 형식(actions·tight·balanced·consensus·info)을 내서 화면·연습 모드를 그대로 쓴다.
+  // 빈도는 근사 모델이다: 프리플랍은 핸드 점수(페어·수티드·연결성·하이카드) 백분위, 포스트플랍은 상대 레인지 표본과의 몬테카를로 에퀴티.
+  const CAT_KO = ['하이카드', '원페어', '투페어', '트립스', '스트레이트', '플러시', '풀하우스', '포카드', '스트레이트 플러시'];
+  const P5 = new Int32Array(5);
+  const BOARD3 = { 3: [[0, 1, 2]], 4: [], 5: [] };
+  for (const n of [4, 5]) for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) for (let c = b + 1; c < n; c++) BOARD3[n].push([a, b, c]);
+  const HOLE2 = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
+  // 오마하 최고 패: 내 카드 2장 × 보드 3장 조합 중 최댓값 (보드 3~5장)
+  function omahaBest(hole, board) {
+    let best = -1;
+    const T = BOARD3[board.length];
+    for (const [i, j] of HOLE2) {
+      P5[0] = hole[i]; P5[1] = hole[j];
+      for (const [a, b, c] of T) {
+        P5[2] = board[a]; P5[3] = board[b]; P5[4] = board[c];
+        const v = evaluate(P5, 5);
+        if (v > best) best = v;
+      }
+    }
+    return best;
+  }
+  // 보드에서 누구든 만들 수 있는 최고 패(넛). 남은 카드 2장 조합 전수
+  function omahaNutValue(board, dead) {
+    const live = [];
+    for (let c = 0; c < 52; c++) if (!dead.has(c)) live.push(c);
+    const T = BOARD3[board.length];
+    let best = -1;
+    for (let x = 0; x < live.length; x++) for (let y = x + 1; y < live.length; y++) {
+      P5[0] = live[x]; P5[1] = live[y];
+      for (const [a, b, c] of T) {
+        P5[2] = board[a]; P5[3] = board[b]; P5[4] = board[c];
+        const v = evaluate(P5, 5);
+        if (v > best) best = v;
+      }
+    }
+    return best;
+  }
+
+  // ── 프리플랍 핸드 점수 (높을수록 좋음) ──
+  function ploScore(h) {
+    const r = h.map((c) => (c >> 2) + 2), s = h.map((c) => c & 3);
+    let sc = 0;
+    const rc = {}; r.forEach((x) => { rc[x] = (rc[x] || 0) + 1; });
+    const pairs = Object.keys(rc).filter((k) => rc[k] === 2).map(Number);
+    if (Object.values(rc).some((n) => n >= 3)) sc -= 9; // 트립스는 손해 (아웃을 스스로 막는다)
+    for (const p of pairs) sc += p >= 10 ? 12 + (p - 10) * 2 : 4 + p * 0.5;
+    if (pairs.length === 2) sc += 3;
+    // 수티드: 같은 무늬 2장 묶음마다, 높은 카드가 높을수록 (A 수티드 = 넛 플러시 드로우)
+    const bySuit = [[], [], [], []];
+    h.forEach((c, i) => bySuit[s[i]].push(r[i]));
+    let suitedGroups = 0;
+    for (const g of bySuit) {
+      if (g.length === 2 || g.length === 3) {
+        const hi = Math.max(...g);
+        sc += (hi === 14 ? 8 : hi === 13 ? 6 : hi >= 11 ? 5 : 4) - (g.length === 3 ? 2 : 0);
+        suitedGroups++;
+      }
+    }
+    // 연결성: 서로 다른 랭크 쌍의 간격 (A는 로우로도 본다)
+    const u = [...new Set(r)].sort((a, b) => a - b);
+    let conn = 0;
+    for (let i = 0; i < u.length; i++) for (let j = i + 1; j < u.length; j++) {
+      const g = Math.min(u[j] - u[i], u[i] === 14 || u[j] === 14 ? Math.abs((u[i] === 14 ? 1 : u[i]) - (u[j] === 14 ? 1 : u[j])) : 99) - 1;
+      if (g <= 3) conn += [4, 3, 2, 1][g];
+    }
+    sc += Math.min(conn, 18);
+    sc += r.reduce((t, x) => t + Math.max(0, x - 9) * 0.8, 0);
+    // 댕글러: 다른 카드와 연결·무늬·페어 어느 것도 없는 카드
+    h.forEach((c, i) => {
+      const linked = r.some((x, j) => j !== i && (x === r[i] || Math.abs(x - r[i]) <= 4 || s[j] === s[i]));
+      if (!linked) sc -= 4;
+    });
+    return { sc, pairs, suitedGroups, conn, u };
+  }
+  // 무작위 4장 핸드 점수 분포 (백분위 계산용, 시드 고정)
+  let PLO_DIST = null;
+  function ploPercentile(h) { // 0 = 최상위, 1 = 최하위
+    if (!PLO_DIST) {
+      const rand = rng(424242), arr = [];
+      for (let k = 0; k < 20000; k++) {
+        const used = new Set(), hh = [];
+        while (hh.length < 4) { const c = (rand() * 52) | 0; if (!used.has(c)) { used.add(c); hh.push(c); } }
+        arr.push(ploScore(hh).sc);
+      }
+      PLO_DIST = Float64Array.from(arr).sort();
+    }
+    const x = ploScore(h).sc;
+    let lo = 0, hi = PLO_DIST.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (PLO_DIST[m] <= x) lo = m + 1; else hi = m; }
+    return 1 - lo / PLO_DIST.length;
+  }
+  function ploPreflopDesc(h) {
+    const f = ploScore(h), r = h.map((c) => (c >> 2) + 2);
+    const t = [];
+    if (f.pairs.includes(14)) t.push('AA');
+    else if (f.pairs.length) t.push(f.pairs.map((p) => RANKS[p - 2] + RANKS[p - 2]).join('·') + ' 페어');
+    if (f.suitedGroups >= 2) t.push('더블 수티드');
+    else if (f.suitedGroups === 1) t.push('싱글 수티드');
+    else t.push('레인보우');
+    if (f.conn >= 12) t.push('런다운');
+    else if (f.conn >= 7) t.push('연결됨');
+    if (Math.min(...r) >= 10) t.push('하이카드 4장');
+    return t.join(' · ');
+  }
+  // 포지션·라인별 프리플랍 레인지 (상위 비율). 근사값
+  const PLO_RFI = { UTG: 0.14, UTG1: 0.15, UTG2: 0.17, LJ: 0.18, HJ: 0.21, CO: 0.28, BTN: 0.42, SB: 0.32, BB: 1 };
+  const ploRfi = (pos) => PLO_RFI[pos] || 0.2;
+  // 상대 레인지 표본: 상위 top 비율 핸드만 거절 표본으로 뽑는다
+  function ploSampleRange(top, dead, n, rand) {
+    const out = [];
+    for (let tries = 0; out.length < n && tries < n * 60; tries++) {
+      const hh = [];
+      const used = new Set(dead);
+      while (hh.length < 4) { const c = (rand() * 52) | 0; if (!used.has(c)) { used.add(c); hh.push(c); } }
+      const p = ploPercentile(hh);
+      // 경계는 부드럽게: top 근처는 일부만 받는다
+      if (p <= top || rand() < Math.max(0, 1 - (p - top) / 0.06)) out.push(hh);
+    }
+    return out;
+  }
+  // 상대 레인지 상위 비율: 프리플랍 라인과 상대 포지션으로
+  function ploOppTop(ctx) {
+    const line = ctx.line || '';
+    if (line.includes('4bet')) return line.startsWith('opp') ? 0.03 : 0.05;
+    if (line.includes('3bet')) return line.startsWith('opp') ? 0.06 : 0.14;
+    if (line === 'limp') return 0.5;
+    if (line === 'opp_open_call') return ploRfi(ctx.oppPos);
+    return ctx.oppPos === 'BB' ? 0.38 : 0.2; // 내 오픈에 콜
+  }
+
+  // 지금 패의 쇼다운 강도 분류 (홀덤과 같은 8개 클래스, 상대 표본 대비)
+  function ploClassify(beatNow, eq) {
+    if (beatNow >= 0.93) return CLS.MONSTER;
+    if (beatNow >= 0.72) return CLS.STRONG;
+    if (eq >= 0.48 && beatNow < 0.5) return CLS.DRAW_STRONG;
+    if (beatNow >= 0.5) return CLS.MEDIUM;
+    if (eq >= 0.34 && beatNow < 0.5) return CLS.DRAW;
+    if (beatNow >= 0.28) return CLS.WEAK;
+    if (eq >= 0.24) return CLS.GUTSHOT;
+    return CLS.AIR;
+  }
+  const PLO_LENS = {
+    tight: { tau: 0.05, beta: 1.2, defend: 0.95, nonNutTax: 0.12, bluffTax: 0.08, w: 'tight' },
+    balanced: { tau: 0.08, beta: 1.5, defend: 1.0, nonNutTax: 0.04, bluffTax: 0, w: 'balanced' },
+  };
+  const ploPotMax = (pot, call) => pot + 2 * call; // 팟 리밋: 콜한 뒤의 팟만큼 더 올린다 → 이번에 넣는 총액 = 콜 + (팟 + 콜)
+
+  function analyzeOmaha(input) {
+    const ctx = Object.assign({ table: 6, game: 'cash', stage: 'middle', eff: 100, oppType: 'unknown', multiway: 1 }, input);
+    ctx.table = normTable(ctx.table);
+    const hero = ctx.hero;
+    if (!hero || hero.length !== 4) return { error: '오마하는 내 카드 4장을 선택하세요.' };
+    const board = ctx.board || [];
+    const dead = new Set(hero.concat(board));
+    const seed = hashSeed('plo', hero.join(','), board.join(','), ctx.line || ctx.pfAction || '', ctx.oppPos || '', ctx.curAct || '');
+    return ctx.street === 'preflop' ? ploPreflop(ctx, hero, seed) : ploPostflop(ctx, hero, board, dead, seed);
+  }
+
+  // ── 프리플랍: 핸드 백분위와 상황별 기준선으로 빈도 ──
+  function ploPreflop(ctx, hero, seed) {
+    const p = ploPercentile(hero), desc = ploPreflopDesc(hero);
+    const pot = ctx.potOverride != null ? ctx.potOverride : 1.5, call = ctx.callOverride != null ? ctx.callOverride : (ctx.heroPos === 'BB' ? 0 : ctx.heroPos === 'SB' ? 0.5 : 1);
+    const heroIn = ctx.heroInOverride || 0, stack = Math.max(0, (ctx.eff || 100) - heroIn);
+    const pf = ctx.pfAction || 'none';
+    const raiseAdd = Math.min(stack, ploPotMax(pot, call)); // 이번에 넣는 칩 (팟 레이즈)
+    const raiseTo = round1(heroIn + raiseAdd);
+    const allinNow = raiseAdd >= stack - 1e-9;
+    const acts = [];
+    acts.push({ key: 'fold', label: 'Fold', kind: 'fold' });
+    if (call > 0) acts.push({ key: 'call', label: pf === 'none' ? 'Limp' : `Call ${bb(Math.min(call, stack))}`, kind: 'call', amount: Math.min(call, stack) });
+    else acts.push({ key: 'check', label: 'Check', kind: 'check' });
+    if (stack > call) acts.push({ key: 'raise', label: allinNow ? `All-in ${bb(stack)}` : `${pf === 'none' ? 'Raise' : pf === 'open' ? '3-Bet' : pf === '3bet' ? '4-Bet' : 'Raise'} 팟 ${bb(raiseTo)}`, kind: allinNow ? 'allin' : 'raise', amount: raiseTo });
+    // 상황별 기준 (상위 비율): [레이즈, 콜]
+    const pos = ctx.heroPos, ip = ctx.oppPos ? postIdx(ctx.table, pos) > postIdx(ctx.table, ctx.oppPos) : true;
+    let base;
+    if (pf === 'none') base = pos === 'BB' ? [0.12, 1] : pos === 'SB' ? [0.24, 0.42] : [ploRfi(pos), 0];
+    else if (pf === 'limp') base = [0.16, ip ? 0.4 : 0.3];
+    else if (pf === 'open') base = [0.05, pos === 'BB' ? 0.4 : ip ? 0.22 : 0.14];
+    else if (pf === '3bet') base = [0.02, ip ? 0.09 : 0.06];
+    else base = [0.012, 0.03]; // 4벳 이상·올인
+    const out = {};
+    for (const style of ['tight', 'balanced']) {
+      const k = style === 'tight' ? 0.78 : 1;
+      const sig = (x, t) => 1 / (1 + Math.exp((x - t) / 0.012));
+      let r = sig(p, base[0] * k), c = base[1] >= 1 ? 1 - r : Math.max(0, sig(p, base[1] * k) - r);
+      if (stack <= call) { c = Math.max(c, r); r = 0; }
+      let f = Math.max(0, 1 - r - c);
+      if (call === 0 && pf === 'none' && pos === 'BB') { c += f; f = 0; } // BB는 체크로 본다
+      const fr = { fold: f, call: c, check: c, raise: r, allin: r };
+      const freq = acts.map((a) => (a.kind === 'check' ? fr.check : fr[a.kind === 'allin' ? 'raise' : a.kind]) || 0);
+      const s = freq.reduce((x, y) => x + y, 0) || 1;
+      out[style] = freq.map((x) => x / s);
+    }
+    const topPct = (x) => `상위 ${pct(Math.max(0.01, x))}`;
+    const reasonsT = [`${desc} · ${topPct(p)}`, p <= base[0] * 0.78 ? '넛을 만들 수 있는 상위 핸드 — 팟 레이즈로 주도권' : p <= (base[1] || 0) * 0.78 ? '플레이 가능하지만 큰 팟은 넛일 때만' : 'PLO는 에퀴티가 고르게 붙어 있다 — 마진 얇은 핸드는 버리고 넛 지향 핸드만'];
+    const reasonsB = [`${desc} · ${topPct(p)}`, p <= base[0] ? '레이즈 범위 — 수티드·연결된 핸드로 팟을 키운다' : p <= (base[1] || 0) ? '콜 범위 — 포지션과 플레이어빌리티로 수익' : '기준선 밖 — 댕글러·레인보우·연결 없는 핸드는 폴드'];
+    const expert = (style, reasons) => ({ freq: out[style], evs: null, headline: reasons[1], facts: [reasons[0], `PLO ${pf === 'none' ? '오픈' : pf === 'open' ? '오픈 상대' : pf === '3bet' ? '3벳 상대' : '큰 레이즈 상대'} 기준: 레이즈 ${topPct(base[0] * (style === 'tight' ? 0.78 : 1))}${base[1] < 1 && base[1] > 0 ? ` · 콜 ${topPct(base[1] * (style === 'tight' ? 0.78 : 1))}` : ''}`], reasons, equity: null, mix: null, info: {} });
+    const tight = expert('tight', reasonsT), bal = expert('balanced', reasonsB);
+    return ploFinish(ctx, acts, tight, bal, { pot, call, heroDesc: desc, required: call > 0 ? call / (pot + call) : null, ip }, p, null);
+  }
+
+  // ── 포스트플랍 ──
+  function ploPostflop(ctx, hero, board, dead, seed) {
+    const rand = rng(seed);
+    const pot = Math.max(0.5, Number(ctx.pot) || 0), call = Math.max(0, Number(ctx.call) || 0), stack = Math.max(0, Number(ctx.stack) || 0);
+    const N = Math.max(1, Math.min(3, ctx.multiway || 1));
+    const top = ploOppTop(ctx);
+    const opp = ploSampleRange(top, dead, 160, rand);
+    // 상대 액션으로 레인지를 좁힌다: 이번·앞 스트리트에 벳·레이즈했으면 지금 강한 패와 드로우 비중을 올린다
+    const aggr = ['bet', 'raise', 'allin'].includes(ctx.curAct) ? 1 : 0;
+    const histAggr = (ctx.history || []).filter((h) => ['bet', 'raise', 'allin'].includes(h.act)).length;
+    const heroNow = omahaBest(hero, board);
+    const need = 5 - board.length;
+    const deck = []; for (let c = 0; c < 52; c++) if (!dead.has(c)) deck.push(c);
+    const runs = need === 0 ? 1 : need === 1 ? 10 : 6;
+    const ow = [], oeq = [], onow = [];
+    for (const o of opp) {
+      const ov = omahaBest(o, board);
+      onow.push(ov);
+      // 상대 기준 강도 (가중치용): 지금 내 패를 이기면 강함
+      const strong = ov > heroNow ? 1 : 0;
+      let w = 1;
+      if (aggr) w *= strong ? 1.8 : 0.7;
+      if (histAggr) w *= strong ? 1.3 : 0.85;
+      ow.push(w);
+      // 런아웃 표본으로 이 상대 핸드 대비 내 에퀴티
+      let win = 0;
+      const used = new Set(o);
+      for (let k = 0; k < runs; k++) {
+        const b = board.slice();
+        let guard = 0;
+        while (b.length < 5 && guard++ < 50) { const c = deck[(rand() * deck.length) | 0]; if (!used.has(c) && !b.includes(c)) b.push(c); }
+        const hv = omahaBest(hero, b), vv = omahaBest(o, b);
+        win += hv > vv ? 1 : hv === vv ? 0.5 : 0;
+      }
+      oeq.push(win / runs);
+    }
+    const W = ow.reduce((a, b) => a + b, 0) || 1;
+    const Ehu = oeq.reduce((t, e, i) => t + e * ow[i], 0) / W;
+    const beatNow = onow.reduce((t, v, i) => t + (heroNow > v ? 1 : heroNow === v ? 0.5 : 0) * ow[i], 0) / W;
+    // 멀티웨이는 헤즈업 에퀴티를 거듭제곱 (PLO는 다자에서 넛이 아니면 크게 불리)
+    const E = Math.pow(Ehu, 1 + 0.9 * (N - 1));
+    const cls = ploClassify(beatNow, Ehu);
+    // 넛 여부, 넛 아웃
+    const nutV = omahaNutValue(board, new Set(board));
+    const isNut = heroNow >= nutV;
+    const cat = heroNow >> 20;
+    let nutOuts = null;
+    if (need >= 1 && need <= 2) {
+      nutOuts = 0;
+      for (const c of deck) {
+        const b = board.concat([c]);
+        if (b.length > 5) continue;
+        const hv = omahaBest(hero, b);
+        if (hv >= omahaNutValue(b, new Set(b)) && hv > heroNow) nutOuts++;
+      }
+    }
+    // 넛 플러시 블로커: 보드에 같은 무늬 3장 이상인데 내가 그 무늬 A를 들고 플러시는 아님
+    const sc = [0, 0, 0, 0]; board.forEach((c) => sc[c & 3]++);
+    const fs = sc.findIndex((x) => x >= 3);
+    const nutBlocker = fs >= 0 && cat < 5 && hero.some((c) => c === (12 << 2 | fs));
+    const fd = sc.findIndex((x) => x === 2) >= 0 && need > 0 ? hero.filter((c) => (c & 3) === sc.findIndex((x) => x === 2)).length >= 2 : false;
+    const desc = `${CAT_KO[cat]}${isNut ? ' (넛)' : ''}${nutOuts != null && nutOuts > 0 && !isNut ? ` · 넛 아웃 ${nutOuts}장` : ''}${nutBlocker ? ' · 넛 플러시 블로커' : ''}`;
+
+    // 액션 (팟 리밋)
+    const acts = [];
+    const maxAdd = Math.min(stack, call > 0 ? ploPotMax(pot - call, call) : pot);
+    if (call > 0) {
+      acts.push({ key: 'fold', label: 'Fold', kind: 'fold' });
+      acts.push({ key: 'call', label: `Call ${bb(Math.min(call, stack))}`, kind: 'call', amount: Math.min(call, stack) });
+      if (stack > call * 1.05) {
+        const all = maxAdd >= stack - 1e-9;
+        acts.push({ key: 'rpot', label: all ? `All-in ${bb(stack)}` : `Raise 팟 ${bb(maxAdd)}`, kind: all ? 'allin' : 'raise', amount: maxAdd, prior: 'rpot' });
+      }
+    } else {
+      acts.push({ key: 'check', label: 'Check', kind: 'check', prior: 'check' });
+      for (const s of [33, 50, 75, 100]) {
+        const amt = Math.min(stack, pot * s / 100);
+        const all = amt >= stack - 1e-9;
+        if (all && acts.some((a) => a.kind === 'allin')) continue;
+        acts.push({ key: 'b' + s, label: all ? 'All-in' : s === 100 ? 'Bet 팟' : `Bet ${s}%`, sub: bb(amt), kind: all ? 'allin' : 'bet', amount: amt, prior: s });
+      }
+    }
+    // 상대 방어: 벳 사이즈 s(=벳/팟)에 MDF 만큼, 지금 강한 순으로 계속한다
+    const order = opp.map((_, i) => i).sort((a, b) => onow[b] - onow[a] || oeq[a] - oeq[b]);
+    function vsCont(frac) { // 상위 frac 만큼 계속할 때 그 레인지 대비 내 에퀴티
+      let t = 0, s = 0, acc = 0;
+      for (const i of order) { if (acc / W >= frac) break; acc += ow[i]; s += oeq[i] * ow[i]; t += ow[i]; }
+      return t ? s / t : Ehu;
+    }
+    const R = cls === CLS.MONSTER || cls === CLS.STRONG ? (ctx.ip ? 1 : 0.95) : ctx.ip ? 0.9 : 0.8;
+    const res = {};
+    for (const style of ['tight', 'balanced']) {
+      const L = PLO_LENS[style];
+      const nonNut = !isNut && (cls === CLS.STRONG || cls === CLS.MEDIUM) ? L.nonNutTax : 0;
+      const evs = acts.map((a) => {
+        if (a.kind === 'fold') return 0;
+        if (a.kind === 'check') return R * E * pot * (1 - nonNut * 0.5);
+        if (a.kind === 'call') {
+          const amt = Math.min(call, stack);
+          return R * E * (pot + amt) * (1 - nonNut) - amt + (nutOuts ? 0.02 * nutOuts * Math.min(stack - amt, pot) * (style === 'balanced' ? 1 : 0.8) : 0);
+        }
+        const X = Math.min(a.amount, stack), s = X / Math.max(pot, 0.1);
+        const cont = clamp(L.defend / (1 + s) * (call > 0 ? 1.15 : 1), 0.05, 1);
+        const fold = Math.pow(1 - cont, N); // 모두 폴드해야 팟을 가져간다
+        const ec = Math.pow(vsCont(cont), 1 + 0.9 * (N - 1));
+        const potCalled = pot + X + Math.max(0, X - call);
+        let ev = fold * pot + (1 - fold) * (ec * potCalled * (1 - nonNut) - X);
+        if (cls === CLS.AIR || cls === CLS.GUTSHOT || cls === CLS.WEAK) ev -= L.bluffTax * pot * (1 + s);
+        if (nutBlocker && (cls === CLS.AIR || cls === CLS.WEAK) && style === 'balanced') ev += 0.06 * pot; // 블로커 블러프
+        return ev;
+      });
+      const priors = acts.map((a) => {
+        if (a.kind === 'fold') return 1;
+        if (a.kind === 'call') return style === 'balanced' ? 1.3 : 1.1;
+        if (a.kind === 'check') return cls === CLS.MEDIUM || cls === CLS.WEAK ? 2 : 1;
+        if (a.kind === 'raise' || a.kind === 'allin') return isNut || cls === CLS.MONSTER ? 1 : cls === CLS.DRAW_STRONG ? (style === 'balanced' ? 0.6 : 0.35) : 0.15;
+        // PLO 벳 사이즈: 플랍 33~50%가 기본, 넛·강한 드로우는 팟까지
+        const pr = { 33: 1.2, 50: 1.1, 75: 0.8, 100: isNut || cls === CLS.DRAW_STRONG ? 0.9 : 0.4 }[a.prior] || 0.5;
+        return a.kind === 'allin' ? (ctx.spr != null && ctx.spr < 1.5 ? 1 : 0.2) : pr;
+      });
+      const freq = softmaxFreq(acts, evs, priors, L.tau, L.beta, Math.max(pot, 1));
+      res[style] = { freq, evs, equity: E };
+    }
+    const facts = [`${desc} · 에퀴티 약 ${pct(E)}${call > 0 ? ` · 필요 ${pct(Math.min(call, stack) / (pot + Math.min(call, stack)))}` : ''}`, `상대 레인지 상위 ${pct(top)} 표본 ${opp.length}개 대비 · 지금 이기는 비율 ${pct(beatNow)}`];
+    const hl = (style) => {
+      if (isNut) return style === 'tight' ? '넛이다 — PLO에서 돈을 넣는 건 넛일 때. 팟을 키운다' : '넛 + 레인지 상단 — 밸류를 최대로, 일부는 체크로 레인지 보호';
+      if (cls === CLS.MONSTER) return style === 'tight' ? '넛은 아니지만 레인지 최상단 — 밸류를 받되, 넛에만 지는 큰 레이즈는 경계' : '거의 넛 — 크게 밸류. PLO는 콜이 많아 두껍게 받는다';
+      if (cls === CLS.DRAW_STRONG) return style === 'tight' ? `넛 드로우만 공격적으로 — ${nutOuts ? `넛 아웃 ${nutOuts}장` : '아웃이 넛인지 확인'}` : `강한 드로우는 세미블러프 후보 — 폴드 에퀴티 + 에퀴티 ${pct(E)}`;
+      if (cls === CLS.STRONG || cls === CLS.MEDIUM) return style === 'tight' ? '넛이 아닌 메이드는 PLO에서 함정 — 큰 팟은 피하고 팟 컨트롤' : '쇼다운 가치는 있지만 넛이 아니다 — 작은 사이즈·체크로 팟을 조절';
+      if (cls === CLS.DRAW) return style === 'tight' ? '넛이 아닌 드로우는 맞아도 진다 — 싸게만 본다' : '드로우 에퀴티로 콜·체크, 넛 아웃이 많으면 공격';
+      return style === 'tight' ? 'PLO 상대는 콜을 많이 한다 — 블러프는 줄이고 포기' : (nutBlocker ? '넛 블로커가 있으면 작은 빈도로 블러프' : '에퀴티가 없으면 체크·폴드');
+    };
+    const mk = (style) => ({ freq: res[style].freq, evs: res[style].evs, headline: hl(style), facts, reasons: [hl(style)].concat(facts), equity: E, mix: null, info: {} });
+    return ploFinish(ctx, acts, mk('tight'), mk('balanced'), { pot, call, heroDesc: desc, required: call > 0 ? Math.min(call, stack) / (pot + Math.min(call, stack)) : null, mdf: call > 0 ? Math.max(0, 1 - call / pot) : null, spr: (stack - call) / Math.max(pot + call, 0.5), ip: ctx.ip, nut: isNut, nutOuts, heroCls: CLS_NAME[cls] }, null, cls);
+  }
+
+  // 합의와 토론 (균형형 60 : 타이트 40, 콜링스테이션 상대는 타이트 비중↑)
+  function ploFinish(ctx, acts, tight, bal, info, pfPct, cls) {
+    const w = ctx.oppType === 'station' ? 0.35 : ctx.oppType === 'nit' ? 0.5 : 0.6;
+    const freq = acts.map((_, i) => w * bal.freq[i] + (1 - w) * tight.freq[i]);
+    const s = freq.reduce((a, b) => a + b, 0) || 1;
+    const f = freq.map((x) => x / s);
+    const top = f.reduce((b, x, i) => (x > f[b] ? i : b), 0);
+    let diff = 0; for (let i = 0; i < acts.length; i++) diff += Math.abs(bal.freq[i] - tight.freq[i]);
+    const tTop = tight.freq.reduce((b, x, i) => (x > tight.freq[b] ? i : b), 0), bTop = bal.freq.reduce((b, x, i) => (x > bal.freq[b] ? i : b), 0);
+    const L = (i) => acts[i].label;
+    const dialogue = [
+      { who: 'tight', text: `${L(tTop)} ${(tight.freq[tTop] * 100).toFixed(1)}%. ${tight.headline}` },
+      { who: 'balanced', text: `${L(bTop)} ${(bal.freq[bTop] * 100).toFixed(1)}%. ${bal.headline}` },
+    ];
+    if (tTop !== bTop) {
+      dialogue.push({ who: 'tight', text: 'PLO는 에퀴티 차이가 작아서, 넛이 아닌 패로 큰 팟을 만들면 리버에 자주 진다.' });
+      dialogue.push({ who: 'balanced', text: '그래서 사이즈로 조절한다. 다만 너무 수동적이면 드로우가 많은 PLO에서 공짜 카드를 준다.' });
+    } else dialogue.push({ who: 'balanced', text: '같은 결론입니다. 넛 지향과 기준선이 같은 방향이에요.' });
+    dialogue.push({ who: 'judge', text: `상대 ${ctx.oppType === 'station' ? '콜링스테이션 → 타이트' : ctx.oppType === 'nit' ? '니트 → 반반' : '정보 없음 → 균형형'} 비중 · 균형형 ${Math.round(w * 100)} : 타이트 ${Math.round((1 - w) * 100)} → 최종 ${L(top)} ${(f[top] * 100).toFixed(1)}%.` });
+    return {
+      variant: 'omaha', street: ctx.street, actions: acts, tight, balanced: bal,
+      consensus: { freq: f, top, agreement: 1 - diff / 2, w, dialogue },
+      info: Object.assign({ heroKey: null, texture: null, villainPct: null }, info, { heroCls: info.heroCls || (pfPct != null ? `상위 ${pct(Math.max(0.01, pfPct))}` : '') }),
+    };
+  }
+
+  // 쇼다운용 설명
+  function omahaDesc(hole, board) {
+    const v = omahaBest(hole, board);
+    return CAT_KO[v >> 20];
+  }
+
   // ───────────────────────── 연습 모드 ─────────────────────────
   // 무작위 카드와 상대 액션으로 핸드를 진행하다가, 정해진 스트리트의 내 차례에서 멈춘다.
   // 상대는 카드를 보지 않는 확률 정책으로 움직이고, 그 전 내 결정은 합의 추천을 따른다.
@@ -1729,6 +2106,7 @@
       if (pick === 'check' || !o.canRaise) return { type: 'check' };
       const pctMap = { b33: 0.33, b50: 0.5, b75: 0.75, b100: 1 };
       const to = round1(s.pot * pctMap[pick]);
+      if (s.plo) return { type: 'bet', to: Math.min(o.max, Math.max(o.min, to)) };
       return to >= o.max * 0.85 ? { type: 'allin' } : { type: 'bet', to: Math.max(o.min, to) };
     }
     const pick = pickW(rand, [['fold', 32], ['call', 55], ['raise', o.canRaise ? 13 : 0]]);
@@ -1797,22 +2175,27 @@
     const heroPos = cfg.heroPos || POSITIONS[table][(rand() * POSITIONS[table].length) | 0];
     const deck = Array.from({ length: 52 }, (_, i) => i);
     for (let i = 51; i > 0; i--) { const j = (rand() * (i + 1)) | 0; [deck[i], deck[j]] = [deck[j], deck[i]]; }
-    let hero = deck.slice(0, 2);
+    const plo = cfg.variant === 'omaha', HN = plo ? 4 : 2;
+    let hero = deck.slice(0, HN);
+    // 오마하: 절반은 상위 35% 핸드를 골라 준다 (덱 앞쪽에서 4장씩 보며 찾는다)
+    if (plo && cfg.playable !== false && rand() < 0.5) {
+      for (let k = 0; k + 4 <= 40; k += 4) { const h = deck.slice(k, k + 4); if (ploPercentile(h) <= 0.35) { hero = h; break; } }
+    }
     // 절반은 상위 40% 핸드를 줘서 프리플랍 폴드로만 끝나지 않게 한다 (cfg.playable 이 false 면 완전 무작위)
-    if (cfg.playable !== false && rand() < 0.5) {
+    if (!plo && cfg.playable !== false && rand() < 0.5) {
       const vr = rangeCombos(topPercent(0.4), new Set());
       let t = 0; for (const w of vr.w) t += w;
       let x = rand() * t, k = 0;
       for (; k < vr.w.length - 1; k++) { x -= vr.w[k]; if (x <= 0) break; }
       hero = COMBOS[vr.idx[k]].slice();
     }
-    const rest = deck.filter((c) => c !== hero[0] && c !== hero[1]);
+    const rest = deck.filter((c) => !hero.includes(c));
     const opp = {};
     let n = 0;
-    for (const pos of POSITIONS[table]) if (pos !== heroPos) { opp[pos] = [rest[n], rest[n + 1]]; n += 2; }
+    for (const pos of POSITIONS[table]) if (pos !== heroPos) { opp[pos] = rest.slice(n, n + HN); n += HN; }
     const board = rest.slice(n, n + 5);
-    const hand = { table, eff: cfg.eff || 100, game: cfg.game === 'mtt' ? 'mtt' : 'cash', heroPos };
-    const p = { cfg: hand, extra: { stage: cfg.stage || 'middle', oppType: cfg.oppType || 'unknown' }, rand, s: startHand(hand), hero, opp, board, acts: [], decisions: [], res: null, end: null };
+    const hand = { table, eff: cfg.eff || 100, game: cfg.game === 'mtt' ? 'mtt' : 'cash', heroPos, variant: plo ? 'omaha' : 'holdem' };
+    const p = { cfg: hand, extra: { stage: cfg.stage || 'middle', oppType: cfg.oppType || 'unknown', variant: hand.variant }, rand, s: startHand(hand), hero, opp, board, acts: [], decisions: [], res: null, end: null };
     return practiceStep(p);
   }
   // 상대 차례를 진행하고, 내 차례면 분석 결과를, 끝났으면 결과를 붙인다
@@ -1847,7 +2230,10 @@
     // 쇼다운 (올인으로 남은 카드를 깐 경우 포함)
     const B = p.board;
     const cards = (pos) => (pos === s.heroPos ? p.hero : p.opp[pos]);
-    const vals = alive.map((pos) => { const c = Int32Array.from(cards(pos).concat(B)); return { pos, val: evaluate(c, 7), desc: analyzeHand(cards(pos)[0], cards(pos)[1], B).desc }; });
+    const vals = alive.map((pos) => {
+      if (s.plo) return { pos, val: omahaBest(cards(pos), B), desc: omahaDesc(cards(pos), B) }; // 오마하: 내 카드 2장 + 보드 3장
+      const c = Int32Array.from(cards(pos).concat(B)); return { pos, val: evaluate(c, 7), desc: analyzeHand(cards(pos)[0], cards(pos)[1], B).desc };
+    });
     const best = Math.max(...vals.map((v) => v.val));
     const winners = vals.filter((v) => v.val === best).map((v) => v.pos);
     return { kind: 'showdown', runout: s.status === 'runout', pot: s.pot, hands: vals, winners, hero: winners.includes(s.heroPos), split: winners.length > 1 };
@@ -1868,7 +2254,7 @@
     playVerdict, startHand, applyAction, replayHand, flowOptions, flowContext,
     parseRange, rangePct, topPercent, analyzeHand, boardTexture, comboEquities, rangeCombos,
     CHARTS, POSITIONS, POS_LABEL, OPP_TYPES, STAGE_LABEL, LENS, analyze, estimateFlopPot,
-    rfiRange, vsOpenChart, handPctile, RANK_LIST, preflopGrid, FOURBET_POT_RANGE, FOURBET_CALL_RANGE, multiwayEquityMC, rangeEquityMC, practiceHand, gradeChoice, flowActionFor, practiceNew, practiceStep, practicePlay,
+    rfiRange, vsOpenChart, handPctile, RANK_LIST, preflopGrid, FOURBET_POT_RANGE, FOURBET_CALL_RANGE, multiwayEquityMC, rangeEquityMC, practiceHand, gradeChoice, flowActionFor, practiceNew, practiceStep, practicePlay, analyzeOmaha, omahaBest, omahaNutValue, ploPercentile, ploPreflopDesc,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.HoldemEngine = api;
