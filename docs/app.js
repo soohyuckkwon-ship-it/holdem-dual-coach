@@ -35,21 +35,29 @@
     amt: { flop: {}, turn: {}, river: {} },
     example: true,
     mode: 'flow', flowActs: [],
+    variant: 'holdem', // 'holdem' | 'omaha' (오마하 = PLO, 카드 4장)
   };
   const clone = (o) => JSON.parse(JSON.stringify(o));
   let S = clone(EXAMPLE);
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (saved) for (const k of ['game', 'table', 'stage', 'eff', 'oppType', 'mode']) if (saved[k] != null) S[k] = saved[k];
+    if (saved) for (const k of ['game', 'table', 'stage', 'eff', 'oppType', 'mode', 'variant']) if (saved[k] != null) S[k] = saved[k];
   } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
+  const isPLO = () => S.variant === 'omaha';
+  const HN = () => (isPLO() ? 4 : 2); // 내 카드 장수
+  function fitHero() {
+    if (S.hero.length !== HN()) S.hero = isPLO() ? [null, null, null, null] : [null, null];
+    if (isPLO() && S.mode === 'manual') S.mode = 'flow'; // 오마하는 핸드 진행·연습만
+  }
+  fitHero();
   function persist() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, mode: S.mode })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, mode: S.mode, variant: S.variant })); } catch (e) { /* 무시 */ }
   }
 
   // ───────── 핸드 진행 ─────────
   const isFlow = () => S.mode === 'flow';
   const isPractice = () => S.mode === 'practice';
-  const flowState = () => H.replayHand({ table: S.table, eff: S.eff, game: S.game, heroPos: S.heroPos }, S.flowActs);
+  const flowState = () => H.replayHand({ table: S.table, eff: S.eff, game: S.game, heroPos: S.heroPos, variant: S.variant }, S.flowActs);
   const SEAT_ACT = { fold: '폴드', check: '체크', call: '콜', bet: '벳', raise: '레이즈', allin: '올인' };
   // 첫 화면 예시: 내 차례까지 모두 폴드한 상태
   S.flowActs = (function () {
@@ -102,7 +110,9 @@
     const btn = (cls, type, to, label) => `<button type="button" class="act-btn ${cls}" data-ftype="${type}" ${to != null ? `data-fto="${to}"` : ''}>${esc(label)}</button>`;
     const custom = o.canRaise ? `<div class="row"><div class="num"><input id="flowAmt" type="number" inputmode="decimal" min="${o.min}" max="${o.max}" step="0.5" placeholder="${fmt1(o.min)}"><span>BB</span></div><button class="ghost" type="button" id="flowCustom">${o.raiseType === 'bet' ? '이 금액 벳' : '이 금액으로 레이즈'}</button></div>` : '';
     const base = (o.canCheck ? btn('call', 'check', null, '체크') : btn('fold', 'fold', null, '폴드') + btn('call', 'call', null, `콜 ${fmt1(o.toCall)}BB`));
-    const allin = btn('allin', 'allin', null, `올인 ${fmt1(o.max)}BB`);
+    // 오마하(팟 리밋)는 팟 한도가 스택보다 작으면 올인 버튼을 두지 않는다
+    const me0 = st.players[o.pos], canJam = !st.plo || o.max >= me0.bet + me0.stack - 1e-9;
+    const allin = canJam ? btn('allin', 'allin', null, `올인 ${fmt1(o.max)}BB`) : '';
     if (o.hero) {
       const res = actsReady && last && last.res;
       if (res && res.actions) {
@@ -177,15 +187,16 @@
       if (st.status !== 'playing' || st.toAct !== st.heroPos) return null;
       return Object.assign(H.flowContext(st), {
         stage: S.stage, oppType: S.oppType,
-        hero: S.hero.filter(Boolean).length === 2 ? toCards(S.hero) : null,
+        hero: S.hero.filter(Boolean).length === HN() ? toCards(S.hero) : null,
         board: toCards(S.board.slice(0, BOARD_N[st.street]).filter(Boolean)),
+        variant: S.variant,
       });
     }
     const base = {
       game: S.game, stage: S.stage, table: S.table, eff: S.eff,
       heroPos: S.heroPos, oppPos: S.oppPos, oppType: S.oppType,
       hero: S.hero.filter(Boolean).length === 2 ? toCards(S.hero) : null,
-      street: S.street,
+      street: S.street, variant: S.variant,
       pfAction: S.pfAction, raiseSize: parseFloat(S.raiseSize) || 0, heroOpen: parseFloat(S.heroOpen) || 0, limpers: S.limpers,
     };
     if (S.street === 'preflop') return base;
@@ -275,7 +286,7 @@
     S.example = false;
     pendingRank = null;
     // 다음 빈 칸으로
-    const limit = active.group === 'hero' ? 2 : Math.max(3, BOARD_N[S.street]);
+    const limit = active.group === 'hero' ? HN() : Math.max(3, BOARD_N[S.street]);
     let next = null;
     if (card) for (let i = 0; i < limit; i++) if (!arr[i]) { next = i; break; }
     if (next == null && card && active.group === 'hero' && S.street !== 'preflop' && S.board.slice(0, BOARD_N[S.street]).some((c) => !c)) {
@@ -312,6 +323,8 @@
     // 연습 모드는 입력 칸 대신 연습 설정만 보여 준다
     const prac = isPractice();
     $('#practiceGroup').hidden = !prac;
+    const manualBtn = $('[data-field="mode"] [data-v="manual"]'); if (manualBtn) manualBtn.hidden = isPLO();
+    document.body.classList.toggle('plo', isPLO());
     document.body.classList.toggle('practice-mode', prac);
     $('[data-cards="hero"]').closest('.group').hidden = prac;
     $('#newHand').hidden = prac;
@@ -445,10 +458,10 @@
   }
   // 내 차례 전이라도, 카드가 있고 아직 액션이 없으면 "모두 폴드로 올 때" 기준으로 미리 판정한다
   function previewVerdict(st) {
-    if (st.status !== 'playing' || st.street !== 'preflop' || S.hero.filter(Boolean).length !== 2 || st.heroPos === 'BB') return null;
+    if (st.status !== 'playing' || st.street !== 'preflop' || S.hero.filter(Boolean).length !== HN() || st.heroPos === 'BB') return null;
     if (st.log.some((e) => e.raised || e.type === 'call' || e.hero)) return null;
     try {
-      return H.analyze({ street: 'preflop', table: st.table, game: S.game, stage: S.stage, eff: S.eff, heroPos: S.heroPos, oppPos: 'BB', oppType: S.oppType, hero: toCards(S.hero), pfAction: 'none' });
+      return H.analyze({ street: 'preflop', table: st.table, game: S.game, stage: S.stage, eff: S.eff, heroPos: S.heroPos, oppPos: 'BB', oppType: S.oppType, hero: toCards(S.hero), pfAction: 'none', variant: S.variant });
     } catch (e) { return null; }
   }
 
@@ -568,7 +581,7 @@
   function situationText() {
     const { res, ctx } = last;
     const L = [];
-    L.push(`게임: ${S.game === 'mtt' ? `토너먼트(${H.STAGE_LABEL[S.stage]})` : '캐시'} ${S.table}-max, 유효 스택 ${fmt1(S.eff)}BB`);
+    L.push(`게임: ${isPLO() ? '팟 리밋 오마하(PLO) — 카드 4장, 쇼다운은 반드시 내 카드 2장 + 보드 3장, 레이즈는 팟까지. ' : '노리밋 홀덤. '}${S.game === 'mtt' ? `토너먼트(${H.STAGE_LABEL[S.stage]})` : '캐시'} ${S.table}-max, 유효 스택 ${fmt1(S.eff)}BB`);
     L.push(`내 포지션 ${H.POS_LABEL[S.heroPos]}, 내 카드 ${S.hero.join(' ')}`);
     L.push(`상대 포지션 ${H.POS_LABEL[S.oppPos]}, 성향 ${H.OPP_TYPES[S.oppType].label}, 팟에 남은 상대 ${S.multiway}명`);
     const pfMap = { none: '내가 첫 액션(앞에서 모두 폴드)', limp: `림프 ${S.limpers}명`, open: `상대 오픈 ${S.raiseSize || '기본'}BB`, '3bet': `내 오픈에 상대 3벳 ${S.raiseSize || '기본'}BB`, '4bet': `내 3벳에 상대 4벳 ${S.raiseSize || '기본'}BB`, allin: '상대 올인' };
@@ -655,8 +668,8 @@
     $('#pracPos').innerHTML = [['any', '무작위']].concat(posList().map((x) => [x, H.POS_LABEL[x]]))
       .map(([v, l]) => `<button class="chip" type="button" data-pp="${v}" aria-pressed="${P.pos === v}">${l}</button>`).join('');
     $$('#pracPlayable [data-pplay]').forEach((b) => b.setAttribute('aria-pressed', String(P.playable) === b.dataset.pplay));
-    const sc = P.score;
-    $('#pracScore').innerHTML = `<span>핸드<b>${sc.hands}</b></span><span>결정<b>${sc.n}</b></span><span>정답<b>${sc.good}</b></span><span>혼합<b>${sc.mixed}</b></span><span>실수<b>${sc.bad}</b></span>`
+    const sc = P.score, mine = PLOG.filter((d) => (d.v || 'holdem') === S.variant), cnt = (lv) => mine.filter((d) => d.lv === lv).length;
+    $('#pracScore').innerHTML = `<span>${isPLO() ? '오마하' : '홀덤'}</span><span>핸드<b>${sc.hands}</b></span><span>결정<b>${mine.length}</b></span><span>정답<b>${cnt('good')}</b></span><span>혼합<b>${cnt('mixed')}</b></span><span>실수<b>${cnt('bad')}</b></span>`
       + `<span>연속 정답<b>${sc.streak}</b></span>`;
     $('#pracStats').innerHTML = statsHTML();
   }
@@ -669,7 +682,7 @@
     return `<div class="sbar"><span class="sl">${esc(label)}</span><div class="st"><i style="width:${sc == null ? 0 : sc}%" class="g${gradeOf(sc)}"></i></div><span class="sv">${sc == null ? '—' : sc}<small>${arr.length ? ` · ${arr.length}${thin ? ' (적음)' : ''}` : ''}</small></span></div>`;
   }
   function statsHTML() {
-    const L = PLOG;
+    const L = PLOG.filter((d) => (d.v || 'holdem') === S.variant); // 게임 종류별 통계
     if (!L.length) return '<p class="hint">결정을 하면 여기에 통계가 쌓입니다.</p>';
     const total = scoreOf(L), recent = scoreOf(L.slice(-30));
     const withLoss = L.filter((d) => d.l != null), loss100 = withLoss.length ? withLoss.reduce((t, d) => t + d.l, 0) / withLoss.length * 100 : null;
@@ -703,7 +716,7 @@
       try {
         // BB에서 모두 폴드로 끝나는 핸드처럼 내 결정이 하나도 없는 핸드는 다시 돌린다
         for (let t = 0; t < 10; t++) {
-          P.hand = H.practiceNew({ table: S.table, eff: S.eff, game: S.game, stage: S.stage, oppType: S.oppType, heroPos: P.pos === 'any' ? null : P.pos, playable: P.playable }, (Math.random() * 4294967296) >>> 0);
+          P.hand = H.practiceNew({ table: S.table, eff: S.eff, game: S.game, stage: S.stage, oppType: S.oppType, heroPos: P.pos === 'any' ? null : P.pos, playable: P.playable, variant: S.variant }, (Math.random() * 4294967296) >>> 0);
           if (!P.hand.end) break;
         }
         P.score.hands++; savePractice(); renderPracticePanel();
@@ -714,8 +727,8 @@
   }
   // 연습 테이블 그림: 내 자리를 아래 가운데에 두고, 자리마다 포지션·스택·이번 스트리트 액션·베팅 칩·카드를 그린다
   const ACT_CLS = { fold: 'fold', check: 'check', call: 'call', bet: 'raise', raise: 'raise', allin: 'allin' };
-  function cardsHTML(cards, back) {
-    if (back) return '<span class="mini"><span class="mc back"></span><span class="mc back"></span></span>';
+  function cardsHTML(cards, back, n) {
+    if (back) return `<span class="mini">${'<span class="mc back"></span>'.repeat(n || 2)}</span>`;
     return miniCards(cards);
   }
   function practiceTableHTML(p) {
@@ -732,7 +745,7 @@
       if (!pl.inHand) badge = ''; // 폴드한 자리는 흐리게 하고 스택 자리에 '폴드'를 쓴다 (말풍선이 옆자리를 가리지 않게)
       else if (pl.allin) badge = `<span class="pact allin">올인${amt}</span>`;
       else if (last) badge = `<span class="pact ${ACT_CLS[last.type]}">${SEAT_ACT[last.type]}${amt}</span>`;
-      const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true)) : '';
+      const cards = me ? cardsHTML(p.hero.map(cstr)) : pl.inHand ? (sd ? cardsHTML(p.opp[pos].map(cstr)) : cardsHTML(null, true, p.hero.length)) : '';
       // 좁은 화면은 자리를 안쪽으로 모아 양 끝이 잘리지 않게 한다
       const rx = window.innerWidth < 520 ? 37 : 43;
       const ry = window.innerWidth < 520 ? 43 : 40;
@@ -748,7 +761,7 @@
     const shown = sd ? 5 : BOARD_N[st.street];
     const board = p.board.slice(0, shown).map(cstr);
     const slots = board.map((c) => miniCards([c])).join('') + Array.from({ length: 5 - board.length }, () => '<span class="mini"><span class="mc slot"></span></span>').join('');
-    return `<div class="ptable ${n >= 8 ? 'many' : ''}"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
+    return `<div class="ptable ${n >= 8 ? 'many' : ''} ${p.hero.length === 4 ? 'plo' : ''}"><div class="pfelt"></div><div class="pcenter"><div class="pboard">${slots}</div><div class="ppot">${sd ? '쇼다운' : p.end ? '핸드 종료' : STREET_LABEL[st.street]} · 팟 <b>${fmt1(st.pot)}BB</b></div></div>${seats}</div>`;
   }
   // 앞 스트리트까지의 액션을 색깔 칩으로 (폴드는 뺀다)
   function practiceTimeline(st, ended) {
@@ -805,8 +818,8 @@
       html += `<h3>이번 핸드의 내 결정 <small class="hint">(누르면 두 전문가 설명)</small></h3><ol class="prac-decs">${D.map((d, k) => `<li><details${k === D.length - 1 ? '' : ''}><summary><span class="badge ${d.grade.level}">${GRADE_LABEL[d.grade.level]}</span> ${STREET_LABEL[d.street]} · ${esc(d.label)}${d.grade.level !== 'good' ? ` <small>(추천 ${esc(d.top)})</small>` : ''}</summary>${expertsExplainHTML(d)}</details></li>`).join('')}</ol>`;
       if (loss >= 0.05) html += `<p class="hint">이번 핸드 EV 손실 합계 약 ${fmt1(loss)}BB (포스트플랍만, 근사)</p>`;
     }
-    const tot = scoreOf(PLOG);
-    if (tot != null) html += `<p class="prac-total">내 플레이 점수 <b>${tot}점</b> <span class="sgrade-mini g${gradeOf(tot)}">${gradeOf(tot)}</span> <small>결정 ${PLOG.length}개 기준 · 자세한 통계는 연습 모드 칸의 "내 플레이 통계"</small></p>`;
+    const mine = PLOG.filter((d) => (d.v || 'holdem') === S.variant), tot = scoreOf(mine);
+    if (tot != null) html += `<p class="prac-total">${isPLO() ? '오마하' : '홀덤'} 플레이 점수 <b>${tot}점</b> <span class="sgrade-mini g${gradeOf(tot)}">${gradeOf(tot)}</span> <small>결정 ${mine.length}개 기준 · 자세한 통계는 연습 모드 칸의 "내 플레이 통계"</small></p>`;
     html += `<div class="prac-picks"><button class="btn" type="button" data-pnext>다음 핸드</button></div></div>`;
     return html;
   }
@@ -841,7 +854,7 @@
     if (!p || p.end || !p.res) return;
     const facing = H.flowOptions(p.s).toCall > 0, street = p.s.street, pos = p.s.heroPos, acts = p.res.actions;
     const g = H.practicePlay(p, i), sc = P.score;
-    PLOG.push({ s: street, p: pos, f: facing ? 1 : 0, k: KIND_GROUP[acts[i].kind], tk: KIND_GROUP[acts[g.top].kind], lv: g.level, r: Math.round(Math.min(1, g.best > 0 ? g.mine / g.best : 1) * 1000) / 1000, l: g.loss == null ? null : Math.round(g.loss * 100) / 100, t: Date.now() });
+    PLOG.push({ v: S.variant, s: street, p: pos, f: facing ? 1 : 0, k: KIND_GROUP[acts[i].kind], tk: KIND_GROUP[acts[g.top].kind], lv: g.level, r: Math.round(Math.min(1, g.best > 0 ? g.mine / g.best : 1) * 1000) / 1000, l: g.loss == null ? null : Math.round(g.loss * 100) / 100, t: Date.now() });
     saveLog();
     P.fb = p.decisions[p.decisions.length - 1];
     sc.n++; sc[g.level]++;
@@ -872,7 +885,8 @@
     }
     if (f === 'heroPos' && S.oppPos === S.heroPos) S.oppPos = posList().find((p) => p !== S.heroPos && (p === 'BB' || p === 'BTN')) || posList().find((p) => p !== S.heroPos);
     if (f === 'pfAction' || f === 'heroPos' || f === 'oppPos' || f === 'table') S.line = null;
-    if (f === 'heroPos' || f === 'table' || f === 'game') S.flowActs = []; // 자리·인원이 바뀌면 진행을 처음부터
+    if (f === 'heroPos' || f === 'table' || f === 'game' || f === 'variant') S.flowActs = []; // 자리·인원·게임이 바뀌면 진행을 처음부터
+    if (f === 'variant') { S.board = [null, null, null, null, null]; S.street = 'preflop'; S.hero = []; fitHero(); active = null; S.example = false; if (P) { P.hand = null; P.fb = null; } }
     if (f === 'street' && v !== 'preflop') {
       const need = BOARD_N[v];
       const empty = S.board.findIndex((c, i) => !c && i < need);
@@ -886,7 +900,7 @@
       const wasPractice = isPractice();
       onFieldClick(e);
       // 연습 모드로 들어오거나 설정이 바뀌면 새 문제
-      if (isPractice() && (!wasPractice || !P.spot || e.target.closest('[data-field="table"], [data-field="game"], [data-field="stage"]'))) newProblem();
+      if (isPractice() && (!wasPractice || !P.hand || e.target.closest('[data-field="table"], [data-field="game"], [data-field="stage"], [data-field="variant"]'))) newProblem();
       return;
     }
     const pk = e.target.closest('[data-pick]');
@@ -965,8 +979,8 @@
     if (e.target.closest('#pkClose')) { active = null; pendingRank = null; sync(); return; }
     if (e.target.closest('#potAuto')) { S.potManual[S.street] = null; update(); return; }
     if (e.target.closest('#newHand, #flowNew')) {
-      const keep = { game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, heroPos: S.heroPos, oppPos: S.oppPos, mode: S.mode };
-      S = Object.assign(clone(EXAMPLE), keep, { hero: [null, null], board: [null, null, null, null, null], street: 'preflop', example: false, curAct: { flop: 'first', turn: 'first', river: 'first' }, results: { flop: 'xx', turn: 'xx' } });
+      const keep = { game: S.game, table: S.table, stage: S.stage, eff: S.eff, oppType: S.oppType, heroPos: S.heroPos, oppPos: S.oppPos, mode: S.mode, variant: S.variant };
+      S = Object.assign(clone(EXAMPLE), keep, { hero: keep.variant === 'omaha' ? [null, null, null, null] : [null, null], board: [null, null, null, null, null], street: 'preflop', example: false, curAct: { flop: 'first', turn: 'first', river: 'first' }, results: { flop: 'xx', turn: 'xx' } });
       active = { group: 'hero', idx: 0 }; pendingRank = null;
       aiState = { status: 'idle' };
       update();

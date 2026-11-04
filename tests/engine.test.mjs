@@ -568,3 +568,55 @@ test('한 핸드 전체 연습: 내 차례마다 멈추고, 고른 액션으로 
   }
   assert.ok(kinds.has('showdown') && (kinds.has('fold') || kinds.has('won')));
 });
+
+// ───── 오마하 (PLO) ─────
+test('오마하 규칙: 반드시 내 카드 2장 + 보드 3장', () => {
+  const board = C('Ah9h5h2hKd');
+  assert.ok((E.omahaBest(C('Qh7c7d3s'), board) >> 20) < 5, '하트 1장으로는 플러시가 아니다');
+  assert.equal(E.omahaBest(C('Qh8h7c3s'), board) >> 20, 5, '하트 2장이면 플러시');
+  assert.equal(E.omahaBest(C('KsKc2d3d'), C('KhKd9s')) >> 20, 7, 'KK + KK9 는 포카드');
+  assert.ok((E.omahaBest(C('AsKdQhJc'), C('5c4d3h2s9c')) >> 20) < 4, '보드 5432 + 내 A 1장은 스트레이트가 아니다 (2장을 써야 한다)');
+  assert.equal(E.omahaBest(C('As6d7hJc'), C('5c4d3h2s9c')) >> 20, 4, '7·6 두 장 + 543 이면 스트레이트');
+});
+
+test('오마하 팟 리밋: 첫 레이즈 최대 3.5BB, 올인 액션도 팟을 넘지 않는다', () => {
+  const s = E.startHand({ table: 6, eff: 100, variant: 'omaha', heroPos: 'BTN' });
+  assert.equal(E.flowOptions(s).max, 3.5);
+  E.applyAction(s, { type: 'allin' });
+  assert.equal(s.cur, 3.5);
+  // 다음 사람 팟 레이즈: 3.5 + (1.5 + 3.5 + 3.5) = 12
+  assert.equal(E.flowOptions(s).max, 12);
+});
+
+test('오마하 분석: 프리플랍 AAKK 더블 수티드는 레이즈, 쓰레기는 폴드, 빈도 합 1', () => {
+  const pf = (h) => E.analyze({ variant: 'omaha', street: 'preflop', table: 6, heroPos: 'CO', pfAction: 'none', hero: C(h) });
+  const top = pf('AhAdKhKd'), bad = pf('7c2d9hQs');
+  assert.ok(freqOf(top, top.consensus, (a) => a.kind === 'raise' || a.kind === 'allin') > 0.9);
+  assert.ok(freqOf(bad, bad.consensus, (a) => a.kind === 'fold') > 0.9);
+  const r = E.analyze({ variant: 'omaha', street: 'flop', table: 6, heroPos: 'BTN', oppPos: 'BB', line: 'hero_open_call', hero: C('AhKh7c6c'), board: C('9h5h2c'), pot: 20, call: 5, stack: 90, curAct: 'bet', ip: true });
+  assert.ok(!r.error);
+  assert.ok(Math.abs(r.consensus.freq.reduce((a, b) => a + b, 0) - 1) < 1e-6);
+  assert.ok(r.info.nutOuts > 0, '넛 플러시 드로우는 넛 아웃이 있다');
+  assert.ok(freqOf(r, r.consensus, (a) => a.kind === 'fold') < 0.2, '넛 플러시 드로우는 잘 접지 않는다');
+});
+
+test('오마하 연습: 카드 4장으로 끝까지 진행하고 쇼다운은 2+3 규칙으로 판정', () => {
+  let sd = 0;
+  for (let h = 1; h <= 15; h++) {
+    const p = E.practiceNew({ table: 6, eff: 100, variant: 'omaha' }, h * 4243);
+    assert.equal(p.hero.length, 4);
+    let g = 0;
+    while (!p.end && g++ < 25) {
+      const i = p.res.actions.findIndex((a) => a.kind === 'call' || a.kind === 'check');
+      E.practicePlay(p, i >= 0 ? i : p.res.consensus.top);
+    }
+    assert.ok(p.end);
+    if (p.end.kind === 'showdown') {
+      sd++;
+      const best = Math.max(...p.end.hands.map((x) => x.val));
+      for (const w of p.end.winners) assert.equal(p.end.hands.find((x) => x.pos === w).val, best);
+      for (const x of p.end.hands) assert.equal(x.val, E.omahaBest(x.pos === p.s.heroPos ? p.hero : p.opp[x.pos], p.board));
+    }
+  }
+  assert.ok(sd > 0);
+});

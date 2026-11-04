@@ -473,6 +473,22 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 /* 연습 모드는 테이블이 곧 결과라 하단 바를 숨긴다. 휴대폰 하단 바는 글씨를 원래 크기로 */
 .practice-mode .dock { display: none !important; }
 @media (max-width: 520px) { .dock .d-act { font-size: 20px; } .dock .d-sub { font-size: 12px; } .dock button { font-size: 14px; } }
+/* 오마하 */
+.plo-only { display: none; }
+body.plo .plo-only { display: block; }
+.seg-variant button { font-weight: 700; min-width: 96px; }
+.ptable.plo .pseat .pc .mc { min-width: 36px; padding: 0 2px; }
+.ptable.plo .pseat.me .pc .mc { min-width: 54px; }
+@media (max-width: 520px) {
+  .ptable.plo .pseat .pc .mc { min-width: 17px; font-size: 11px; height: 26px; }
+  .ptable.plo .pseat .pc { height: 26px; margin-top: -18px; }
+  .ptable.plo .pseat.me .pc .mc { min-width: 26px; font-size: 14px; height: 38px; padding: 0 1px; }
+  .ptable.plo .pseat.me .pc { height: 38px; margin-top: -30px; white-space: nowrap; }
+  .ptable.plo .pseat.me { z-index: 5; }
+  .ptable.plo.many .pseat .pc .mc.back { min-width: 11px; width: 11px; height: 20px; padding: 0; }
+  .ptable.plo.many .pseat .pc { height: 20px; margin-top: -14px; }
+  .ptable.plo.many .pseat.me .pc { height: 38px; margin-top: -30px; }
+}
 </style>
 
 <div class="app">
@@ -488,6 +504,10 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
     <section class="inputs" aria-label="상황 입력">
       <div class="group">
         <div class="group-head"><h2>게임</h2><button class="ghost" id="newHand" type="button">새 핸드</button></div>
+        <div class="row">
+          <div class="seg seg-variant" data-field="variant"><button type="button" data-v="holdem">홀덤</button><button type="button" data-v="omaha">오마하</button></div>
+        </div>
+        <p class="hint plo-only">오마하(팟 리밋): 카드 4장을 받고, 쇼다운에서는 반드시 내 카드 2장 + 보드 3장으로 패를 만듭니다. 레이즈는 팟 크기까지. 핸드 진행·연습 모드를 지원합니다.</p>
         <div class="row">
           <div class="seg" data-field="game"><button type="button" data-v="cash">캐시</button><button type="button" data-v="mtt">토너먼트</button></div>
           <div class="seg" data-field="mode"><button type="button" data-v="flow">핸드 진행</button><button type="button" data-v="manual">직접 입력</button><button type="button" data-v="practice">연습</button></div>
